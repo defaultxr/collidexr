@@ -1,1 +1,4 @@
-EventEditor.sc
+EventEditor {
+	*new {
+	}
+}
