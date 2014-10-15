@@ -1,0 +1,1 @@
+extStringRewrite.sc
