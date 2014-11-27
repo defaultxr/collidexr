@@ -8,17 +8,18 @@
 	* estimateLength for Pbinop (FIX: submit as pull request to ddwPatterns)
 CURRENT GOAL:
 * fix EventHistory and EventHistView (now in EventHistView.sc)
+* finish CKnob (in Ctl.sc)
 */
 
 Structer {
 	var <>rows;
 	var <>elements, <>eevents;
 	var <>ehs;
-	var <>ehvs, <>lvs, <>ivs; // EventHistViews, EventHistView views, lookViews, and inspectViews
+	var <>ehvs, <>lvs, <>iv; // EventHistViews, EventHistView views, lookViews, and inspectView
 	var <>subViewModes; // FIX: remove this, make it per-element.
 	var <>keymap;
 	var <>toolbarview;
-	var <>tempoview, <>statusview;
+	var <>title, <>tempoview, <>statusview;
 	var <>mainview;
 	var <>ctf;
 	var <>inspectorview;
@@ -27,6 +28,7 @@ Structer {
 	var <>playing;
 	var <>selected;
 	var <isOpen;
+	var temporoutine;
 	*initClass {
 		Spec.add(\amp, [0, 1, \lin, 0, 0.5, ""]); // normally this has a default of 0 and a warp of 'amp'
 		Spec.add(\out, [0, Server.default.options.numOutputBusChannels-1, \lin, 1, 0, ""]);
@@ -40,20 +42,16 @@ Structer {
 		ehs = (); // EventHistorys
 		ehvs = (); // EventHistViews
 		lvs = (); // lookViews
-		ivs = (); // inspectViews
 		subViewModes = ();
 		playing = []; // list of names of things that are playing
-		elements = ();
-		eevents = ();
-		selected = [];
+		elements = (); // dictionary of items in Structer (i.e. patterns, ndefs, synthdefs, etc)
+		eevents = (); // dictionary of item metadata
+		selected = []; // list of names of selected items
 		isOpen = false;
 		messagequeue = [];
 		keymap = Keymap((
 			'C-z': {
 				"stumpish emacs".unixCmd;
-			},
-			'C-c C-c': {
-				this.message("typed C-c C-c");
 			},
 			'C-g': {
 				this.select;
@@ -105,8 +103,11 @@ Structer {
 					);
 				});
 			},
-			'C-d': { // FIX - make this.
-				this.message("DELETE...");
+			'C-d': {
+				this.del;
+			},
+			'C-e': {
+				this.edit;
 			},
 			'M-:': {
 				this.query("Exec:", [], {
@@ -127,20 +128,36 @@ Structer {
 		win.layout_(VLayout().spacing_(0).margins_(0));
 		win.layout.add(this.makeToolbarView(win.view));
 		win.layout.add(this.makeMainView(win.view), 12);
-		win.layout.add(this.makeInspectorView(win.view), 4);
+		iv = this.makeInspectorView(win.view);
+		win.layout.add(iv, 4);
 		isOpen = true;
 		win.view.keyDownAction_({
 			| view char modifiers unicode keycode |
 			var stringified = Keymap.stringifyKey(modifiers, keycode);
-			keymap.keyDown(stringified).value(stringified);
+			var result = keymap.keyDown(stringified);
+			case(
+				{ result.isKindOf(Symbol) }, {
+					Message(this, result, [stringified]).value;
+				},
+				{ result.isKindOf(Function) }, {
+					result.value(stringified);
+				},
+				{ result.isKindOf(Array) }, {
+					Message(this, result[0], result[1..]).value;
+				},
+			);
 		});
 		^win.front;
 	}
 	makeToolbarView {
 		| parent |
+		var buf;
 		toolbarview = UserView(parent, parent.view.bounds).resize_(5);
 		toolbarview.layout_(HLayout().spacing_(0).margins_(0));
-		toolbarview.layout.add(StaticText().string_("Structer").background_(Color.black).stringColor_(Color.white).font_(Font("ProFont", 20)), 16);
+		title = StaticText().string_("Structer").background_(Color.black).stringColor_(Color.white).font_(Font("ProFont", 20));
+		toolbarview.layout.add(title, 16);
+		// scopeview = ScopeView();
+		// toolbarview.layout.add(scopeview, 1);
 		tempoview = StaticText().align_(\center).font_(Font("ProFont", 20));
 		tempoview.mouseWheelAction_({
 			| view x y modifiers xdelta ydelta |
@@ -148,7 +165,7 @@ Structer {
 		});
 		toolbarview.layout.add(tempoview, 1);
 		statusview = StaticText();
-		{
+		temporoutine = {
 			block {
 				| break |
 				loop {
@@ -161,7 +178,9 @@ Structer {
 					});
 				}
 			}
-		}.fork(AppClock);
+		};
+		temporoutine.fork(AppClock);
+		CmdPeriod.add({temporoutine.fork(AppClock);});
 		toolbarview.layout.add(statusview, 4);
 		^toolbarview;
 	}
@@ -312,6 +331,7 @@ Structer {
 			});
 		});
 		mainview.onClose_({
+			CmdPeriod.remove(temporoutine);
 			isOpen = false;
 		});
 		mainview.refresh;
@@ -321,34 +341,62 @@ Structer {
 	}
 	setSubViewMode {
 		| name mode |
-		name = name.asSymbol;
-		subViewModes[name] = mode;
-		if(isOpen, {
-			var xy = this.getXYOfElement(name), nbounds = this.getVRect(xy[0], xy[1]);
-			switch(mode,
-				\lv, {
-					this.makeLV(name);
-					lvs[name].bounds_(nbounds);
-					ehvs[name].remove;
-				},
-				\ehv, {
-					this.makeEHV(name);
-					lvs[name].remove;
-					lvs[name] = nil;
-				},
-			);
+		if(name.isNil, {
+			name = this.selected[0];
+		});
+		if(name.notNil, {
+			name = name.asSymbol;
+			subViewModes[name] = mode;
+			if(isOpen, {
+				var xy = this.getXYOfElement(name), nbounds = this.getVRect(xy[0], xy[1]);
+				switch(mode,
+					\lv, {
+						this.makeLV(name);
+						lvs[name].bounds_(nbounds);
+						ehvs[name].remove;
+					},
+					\ehv, {
+						this.makeEHV(name);
+						lvs[name].remove;
+						lvs[name] = nil;
+					},
+				);
+			});
 		});
 	}
 	makeInspectorView {
 		| parent |
 		inspectorview = UserView(parent, parent.view.bounds.height_(200)).resize_(8).background_(Color.gray(0.1)).drawFunc_({
-			var pate = this.getElementEvent(this.selected[0]);
 			Pen.font_(Font("ProFont", 20));
 			Pen.color_(Color.white);
-			Pen.stringAtPoint(this.selected[0].asString, 2@2);
-			Pen.stringAtPoint(pate.cs, 2@25);
-		});
+			if(this.selected.size == 0, {
+				Pen.stringAtPoint("(none)", 2@2);
+				Pen.stringAtPoint("Pdefs:"+(Pdef.all.values.select(_.isPlaying).collect(_.key).reduce('+')), 2@25);
+			}, {
+				var pate = this.getElementEvent(this.selected[0]);
+				Pen.stringAtPoint(this.selected[0].asString, 2@2);
+				Pen.stringAtPoint(pate.cs, 2@25);
+			});
+		}).animate_(true).frameRate_(1);
 		^inspectorview;
+	}
+	inspect {
+		| name |
+		var quantbox;
+		inspectorview.removeAll;
+		if(name.isNil, {
+			
+		}, {
+			inspectorview.layout_(HLayout());
+			quantbox = NumberBox(inspectorview).action_({
+				| view |
+				if(this.getElementEvent(name)[\params].isNil, {
+					this.getElementEvent(name)[\params] = ();
+				});
+				this.getElementEvent(name)[\params][\quant] = view.value;
+			});
+		});
+		this.iv.refresh;
 	}
 	eventRecv {
 		| event name beat |
@@ -384,22 +432,56 @@ Structer {
 	}
 	del {
 		| name |
-		var item = this.getElementEvent(name);
-		
+		var item, remove = [];
+		if(name.isNil, {
+			name = this.selected[0];
+		});
+		item = this.getElementEvent(name);
+		if(item.notNil, {
+			this.stopElement(item[\name]);
+			rows.do({
+				| row n |
+				row.del(item[\name]);
+				if(row.array.size == 0, {
+					remove = remove ++ [n];
+				});
+			});
+			remove.reverseDo({
+				| num |
+				rows.removeAt(num);
+			});
+			eevents.removeAt(item[\name]);
+			ehvs.at(item[\name]).remove;
+			ehvs.removeAt(item[\name]);
+			lvs.at(item[\name]).removeAll;
+			lvs.at(item[\name]).remove;
+			lvs.removeAt(item[\name]);
+			this.message("Deleted " ++ item[\name].asString);
+		}, {
+			this.message("Failed to delete item.");
+		});
+	}
+	delete {
+		| name |
+		^this.del(name);
 	}
 	select {
 		| name |
 		if(name.isNil, {
 			selected = [];
 			this.message("Deselected all");
+			this.inspect(nil);
 		}, {
 			var event = this.getElementEvent(name);
 			if(selected.includes(event[\name]).not, {
 				selected = [event[\name]];
 				this.message("Selected"+event[\name].asString);
 			});
-			// this.inspect(event[\name]); // FIX
+			this.inspect(event[\name]); // FIX
 		});
+	}
+	edit { // FIX
+		this.message("FIX");
 	}
 	getElement {
 		| name |
@@ -426,7 +508,15 @@ Structer {
 			((this.eevents[e][\keyname].toLower.asSymbol)==(key.toLower.asSymbol));
 		}).asArray;
 		^if(res.size > 0, {
-			this.eevents[res[0]];
+			var sel = res.collect({
+				| item |
+				this.selected.includes(item);
+			}).indexOf(true);
+			if(sel.isNil, {
+				this.eevents[res[0]];
+			}, {
+				this.eevents[res.wrapAt(sel+1)];
+			});
 		}, nil);
 	}
 	getXYOfElement {
@@ -451,8 +541,9 @@ Structer {
 			});
 		}, {
 			if(playing.includes(name).not, {
+				var params = this.getElementEvent(name)[\params];
 				playing = playing ++ [name];
-				this.getElement(name).stplay((), this); // FIX - should include parameters
+				this.getElement(name).stplay(params?(), this);
 			}, {
 				("already playing"+name.asString).postln;
 			});
@@ -556,6 +647,11 @@ Row {
 		});
 	}
 	del {
+		| name |
+		var index = this.names.indexOf(name);
+		if(index.notNil, {
+			array.removeAt(index);
+		});
 	}
 	names {
 		^array.collect({|e|e[\name].asSymbol});
@@ -715,26 +811,46 @@ StepSequence {
 	}
 	stplay { // FIX...
 		| params structer |
-		var play, prout;
-		play = Pfwd(this, Message(structer, \eventRecv), this.name);
+		// var prout;
+		// prout = this.pattern_(this.pattern.patternpairs_(
+		// 	this.pattern.patternpairs
+		// 	++ [
+		// 		\__, Pfunc({
+		// 		| e |
+		// 		structer.eventRecv(e, this.name, thisThread.clock.beats);
+		// 		}),
+		// 	];
+		// ));
+		var prout;
 		prout = Prout({
 			| inevent |
 			while({ structer.playing.includes(this.name); }, {
 				var stream, out;
-				stream = play.asStream;
+				stream = Pfwd(this, Message(structer, \eventRecv), this.name).asStream;
 				while({ out = stream.next(inevent); out.notNil; }, {
 					out.yield;
 				});
 			});
 		});
-		^prout.play(quant:params[\quant]);
+		^prout.play;
 	}
 	ststop {
 		^this;
 	}
 	lookView {
 		| parent bounds |
-		^UserView(parent, bounds).background_(Color.yellow);
+		^UserView(parent, bounds).background_(Color.black).drawFunc_({
+			| view |
+			var ctls = this.findCtls;
+			Pen.color_(Color.white);
+			if(ctls.size == 0, {
+				Pen.stringAtPoint("No Ctls found. Try C-e to edit.", 0@0);
+				Pen.stringInRect(this.pattern.cs, Rect(0, 20, view.bounds.width, view.bounds.height-20));
+			}, {
+				Pen.stringInRect("Ctls: " ++ (ctls.collect(_.key).reduce('+/+')), Rect(0, 0, view.bounds.width, view.bounds.height));
+			});
+			Pen.draw;
+		}).frameRate_(0.1).animate_(true);
 	}
 	inspectView {
 		| parent bounds |
@@ -813,7 +929,7 @@ StepSequence {
 		| parent bounds structer |
 		var uv = UserView(parent, bounds);
 		var ctrls = this.allControlNames;
-		uv.layout_(HLayout());
+		uv.layout_(HLayout().margins_(0).spacing_(1));
 		ctrls.do({
 			| ctrl |
 			var name = ctrl.name.asSymbol, val = ctrl.defaultValue;

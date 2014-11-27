@@ -211,7 +211,7 @@ XR { // FIX: research the Library class
 			var schar = symbolmap[char.asSymbol];
 			if(schar.notNil, {
 				if(schar.isKindOf(Event), {
-					result = result.add(schar);
+					result = result.add((dur:1/4)++schar);
 				}, {
 					result = result.add((instrument: schar, dur: 1/4));
 				});
@@ -223,6 +223,9 @@ XR { // FIX: research the Library class
 		});
 		^Pseq(result);
 	}
+	// drumDurConv { // should be like drumConv, but only output durs for \dur, or perhaps note types for \type.
+	// 	^this.drumConv(('*'
+	// }
 	view {
 		| parent bounds |
 		^StaticText(parent, bounds)
@@ -429,6 +432,27 @@ XR { // FIX: research the Library class
 			[key.asSymbol, this[key]];
 		}).flat;
 	}
+	expandArrays {
+		/*
+			call this method on an Event that has an Array for a key, and all of the elements in that Array will be expanded into individual keys.
+			in other words:
+			([\foo, \bar, \baz]: \qux).expandArrays == (\foo: \qux, \bar: \qux, \baz: \qux)
+		*/
+		var res = ();
+		this.keys.do({
+			| key |
+			var val = this[key];
+			if(key.isKindOf(Array), {
+				key.do({
+					| item |
+					res[item] = val;
+				});
+			}, {
+				res[key] = val;
+			});
+		});
+		^res;
+	}
 }
 
 + Buffer {
@@ -597,6 +621,9 @@ XR { // FIX: research the Library class
 + Ndef {
 	*list {
 		^Ndef.all.values.collect({|i|i.activeProxies.asArray}).flat;
+	}
+	controls {
+		^this.controlNames;
 	}
 }
 

@@ -312,29 +312,46 @@ Pq : Pattern { // "Pattern query"
 	* automatically provides \pbeat (to the pattern, so that it can be read via Pkey, etc)
     * Pkey can access last value, even between events (maybe?)
     * automatically have Pdef's "global namespace" (no)
-    * \instrument can be an Ndef or a Synth instance and it is handled properly
+	* provide a Synth or Ndef instance as the argument to \set and Pb will set that synth/node's values.
 */
 
 Pb : Pattern {
 	*new {
 		| ... pbind |
 		var pc, pbe = pbind.asEvent;
-		pc = Pchain(Pbind(*pbind),
-			Pbind(
-				\tempo, Pfunc({thisThread.clock.tempo}),
-				\tbeat, Pfunc({thisThread.clock.beats}),
-				\beat, Pkey(\tbeat),
-				\pbeat, Prout({
-					var start = thisThread.clock.beats;
-					loop {
-						(thisThread.clock.beats-start).yield;
-					};
+		if(pbe[\set].notNil, {
+			var idx = pbind.indexOf(\set);
+			pbind = pbind ++ [
+				\id, Pfunc({
+					| e |
+					e[\set].asNodeID;
 				}),
-				\event, Pseries(0, 1, inf),
-			),
-		);
-		if(pbe[\plength].notNil, {
-			var len = pbe[\plength];
+				\args, Pfunc({
+					| e |
+					e[\set].controls.collect(_.name).sect(pbe.keys);
+				}),
+				// \instrument, Pfunc({
+				// 	| e |
+				// 	e[\set].defName;
+				// }),
+				\type, \set,
+			];
+		});
+		pbind = [
+			\tempo, Pfunc({thisThread.clock.tempo}),
+			\tbeat, Pfunc({thisThread.clock.beats}),
+			\beat, Pkey(\tbeat),
+			\pbeat, Prout({
+				var start = thisThread.clock.beats;
+				loop {
+					(thisThread.clock.beats-start).yield;
+				};
+			}),
+			\event, Pseries(0, 1, inf),
+		] ++ pbind;
+		pc = Pbind(*pbind);
+		if(pbe[\psync].notNil, {
+			var len = pbe[\psync];
 			pc = Psync(pc, len, len);
 		});
 		if(pbe[\pr].notNil, {
@@ -358,12 +375,12 @@ Pd : Pattern {
 			all[name] = 0;
 		});
 		^Pdef(name, Pb(*[
-			\pkey, name,
+			\pdef, name,
 			\stream, Pr(
 				Pfunc({
 					| e |
-					var new = Pd.all[e[\pkey]] + 1;
-					Pd.all[e[\pkey]] = new;
+					var new = Pd.all[e[\pdef]] + 1;
+					Pd.all[e[\pdef]] = new;
 					new;
 				})
 			)
@@ -456,6 +473,32 @@ PMouseX : Pattern { // TODO
 }
 
 PMouseY : Pattern { // TODO
+}
+
+PSinOsc : Pattern { // STOLEN FROM THE UGENPATTERNS QUARK (FIX)
+	var <>freq, <>phase, <>mul, <>add, <>length;
+	*new {|freq= 440, phase= 0, mul= 1, add= 0, length= inf|
+		^super.newCopyArgs(freq, phase, mul, add, length);
+	}
+	storeArgs {^[freq, phase, mul, add, length]}
+	embedInStream {|inval|
+		var freqStr= freq.asStream;
+		var phaseStr= phase.asStream;
+		var mulStr= mul.asStream;
+		var addStr= add.asStream;
+		var freqVal, phaseVal, mulVal, addVal;
+		var theta= 0;
+		length.value(inval).do{
+			addVal= addStr.next(inval);
+			mulVal= mulStr.next(inval);
+			phaseVal= phaseStr.next(inval);
+			freqVal= freqStr.next(inval);
+			if(addVal.isNil or:{mulVal.isNil or:{phaseVal.isNil or:{freqVal.isNil}}}, {^inval});
+			inval= (sin(theta/freqVal*2pi+phaseVal)*mulVal+addVal).yield;
+			theta= theta+1;
+		};
+		^inval;
+	}
 }
 
 // Pfork : Pattern { // launch parallel patterns based on events from the parent stream. use pattern.fork in a Pfunc instead.

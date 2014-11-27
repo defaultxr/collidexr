@@ -16,7 +16,7 @@ SFV {
 			endpos = ((rate>0)*end)+((rate<0)*start);
 			endpos = endpos * bufframes;
 			line = Env([startpos, startpos, endpos, endpos], [0, line_dur, 0], \lin, loop*2, 0).ar(doneAction, retrig);
-			SendReply.kr(Impulse.kr(oscReplyRate), "/sfv/position", [line]); // THIS IS THE LINE THAT WAS ADDED.
+			SendReply.kr(Impulse.kr(oscReplyRate), "/sfv/position", [line]);
 			BufRd.ar(numChannels, bufnum, line);
 		};
 

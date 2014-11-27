@@ -1,26 +1,54 @@
 CKnob : SCViewHolder { // see also: KSlider in SynthStruct.sc
-	var <parent, <bounds, <label, <spec, <>action, <knob, <viz, <numberbox;
+	// FIX: rename the instance vars (label -> labels, spec -> specs, action -> actions, etc)
+	// FIX: make it Ctl-compatible
+	var <parent, <bounds, label, spec, <>action, <vals, <knob, <viz, <numberbox;
 	var <mouseDown=false;
 	var <xy;
 	*new { // FIX: should make it possible to use without a spec being required.
 		| parent bounds label spec action |
-		^super.newCopyArgs(nil, parent, bounds??{if(parent.notNil, {parent.bounds}, nil)}, label, spec, action).init;
+		^super.newCopyArgs(parent, bounds??{if(parent.notNil, {parent.bounds}, nil)}).init(label, spec, action);
 	}
 	init {
+		| ilabel ispec iaction |
 		this.view_(UserView(parent, bounds).layout_(VLayout().spacing_(0).margins_(0)));
 		xy = [0, 0];
 		numberbox = NumberBox();
-		this.spec_(spec);
+		spec = [];
+		label = [];
+		vals = [];
+		this.spec_(ispec);
+		this.label_(ilabel);
+		this.action_(iaction);
 		viz = UserView().background_(Color.black)
 		.drawFunc_({
+			| view |
+			var string = nil.dup(spec.size);
 			Pen.color_(Color.white);
-			Pen.stringAtPoint(this.label??{this.spec.asString}, 0@0);
-			if(spec.notNil, {
-				Pen.stringAtPoint("has a spec", 0@20);
-			}, {
-				Pen.stringAtPoint("no spec", 0@20);
+			// Pen.stringAtPoint(this.label??{this.spec(0).asString}, 0@0);
+			spec.do({
+				| the_spec num |
+				string[num] = this.label(num)??{this.spec(num).asString} ++ ": "
+				++ this.value(num)
+				++ if(the_spec.isNil, {
+					" (no spec)";
+				}, "");
 			});
-			Pen.stringAtPoint("value: " ++ (this.value.asString), Point(0, viz.bounds.height-20));
+			string.do({
+				| str n |
+				Pen.stringAtPoint(str, Point(0, 20*n));
+			});
+			vals.do({
+				| v n |
+				var percent = spec[n].unmap(v);
+				var x = percent * Message(view.bounds, [\width, \height].at(n)).value;
+				if(n.even, {
+					Pen.line(x@0, x@view.bounds.height);
+				}, {
+					var inv = (view.bounds.height-x);
+					Pen.line(0@inv, view.bounds.width@inv);
+				});
+			});
+			Pen.stroke;
 			Pen.draw;
 		})
 		.mouseDownAction_({
@@ -29,9 +57,10 @@ CKnob : SCViewHolder { // see also: KSlider in SynthStruct.sc
 				0, {
 					mouseDown = true;
 					xy = [x, y];
-					{
+					{ // this has to be a routine so that it is still updated when relative mode is in use.
 						while({ mouseDown == true }, {
 							this.change(xy[0]/viz.bounds.width);
+							this.change(1-(xy[1]/viz.bounds.height), 1);
 							0.01.wait;
 						});
 					}.fork(AppClock);
@@ -69,42 +98,89 @@ CKnob : SCViewHolder { // see also: KSlider in SynthStruct.sc
 	}
 	change { // change the value, taking into account the mode, spec, etc.
 		| by which=0 | // 'by' should be a number from 0-1
-		if(spec.isNil, { // relative mode
-			this.value_(this.value + (by*2-1));
+		if(spec[which].isNil, { // relative mode
+			this.value_(this.value + (by*2-1), which);
 		}, {
-			this.value_(this.spec.map(by));
+			this.value_(this.spec(which).map(by), which);
 		});
+	}
+	label {
+		| which=0 |
+		^label[which];
+	}
+	labels {
+		^label;
 	}
 	label_ {
-		| text |
-		label = text;
+		| text which=0 |
+		if(text.isKindOf(Array), {
+			text.do({
+				| t n |
+				this.label_(t, n);
+			});
+		}, {
+			if(label.size <= which, {
+				this.prGrow(which+1);
+			});
+			label[which] = text;
+		});
 		this.refresh;
+	}
+	spec {
+		| which=0 |
+		^spec[which];
+	}
+	specs {
+		^spec;
 	}
 	spec_ {
-		| cspec |
-		if(this.label.isNil, {
-			this.label_(cspec.asString);
+		| cspec which=0 |
+		if(cspec.isKindOf(Array), {
+			cspec.do({
+				| sp n |
+				this.spec_(sp, n);
+			});
+		}, {
+			if(spec.size <= which, {
+				this.prGrow(which+1);
+			});
+			if(this.labels.size <= which or: {this.label(which).isNil}, {
+				this.label_(cspec.asString, which);
+			});
+			// numberbox.step_(cspec.step?{cspec.guessNumberStep});
+			// numberbox.clipLo_(cspec.minval);
+			// numberbox.clipHi_(cspec.maxval);
+			spec[which] = cspec.asSpec;
 		});
-		cspec = cspec.asSpec;
-		numberbox.step_(cspec.step?{cspec.guessNumberStep});
-		numberbox.clipLo_(cspec.minval);
-		numberbox.clipHi_(cspec.maxval);
-		spec = cspec;
 		this.refresh;
 	}
+	prGrow {
+		| newsize |
+		vals = vals.growClear(newsize-vals.size).collect({
+			| x |
+			if(x.isNil, 0, x);
+		});
+		spec = spec.growClear(newsize-spec.size);
+		label = label.growClear(newsize-label.size);
+	}
 	set {
-		| value |
+		| value which=0 |
 		// knob.value_(spec.unmap(value));
 		numberbox.value_(value);
-		action.value(value);
+		if(vals.size <= which, {
+			this.prGrow(which+1);
+		});
+		vals[which] = value;
+		action.value(value, which);
 		this.refresh;
 	}
 	value {
-		^this.numberbox.value;
+		| which=0 |
+		^this.vals[which];
 	}
 	value_ {
-		| value |
-		^this.set(value);
+		| value which=0 |
+		^this.set(value, which);
 	}
 }
 
@@ -208,7 +284,7 @@ Ctl : Pattern { // FIX: make the 'spec' global also?
 	}
 	storeOn {
 		| stream |
-		stream << "Ctl('" << this.key.asString << "').(" << this.value.asString << ")";
+		stream << "Ctl('" << this.key.asString << "', " << this.value.asString << ")";
 	}
 	printOn {
 		| stream |
