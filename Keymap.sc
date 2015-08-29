@@ -3,6 +3,7 @@
 
 Keymap {
 	var <bindings;
+	var <boundKeys;
 	var <>context;
 	classvar keycodeMap, shiftedKeycodeMap;
 	*initClass {
@@ -106,6 +107,7 @@ Keymap {
 	init {
 		| binds |
 		bindings = (keymap: true);
+		boundKeys = [];
 		context = "";
 		if(binds.notNil, {
 			this.binds(binds);
@@ -113,6 +115,7 @@ Keymap {
 	}
 	bind {
 		| key value |
+		boundKeys = this.boundKeys ++ [key];
 		if(key.isKindOf(Array), {
 			key.do({
 				| k |
@@ -130,10 +133,17 @@ Keymap {
 	}
 	binds {
 		| event |
-		event.keys.do {
-			| key |
-			this.bind(key, event[key]);
-		};
+		if(event.isKindOf(Array), {
+			event.pairsDo({
+				| key val |
+				this.bind(key, val);
+			});
+		}, {
+			event.keys.do({
+				| key |
+				this.bind(key, event[key]);
+			});
+		});
 	}
 	merge {
 		| keymap |
@@ -180,5 +190,24 @@ Keymap {
 			^result;
 		});
 	}
+	helpInfo {
+		^this.boundKeys.collect({
+			| key |
+			var keystring = key.asString;
+			var keylookup = if(key.isKindOf(Array), {key[0]}, {key});
+			var res = this.at(keylookup);
+			var resstring = case(
+				{res.isKindOf(Symbol)}, {
+					res.asString;
+				},
+				{res.isKindOf(Message)}, {
+					res.cs;
+				},
+				{res.isKindOf(Function)}, {
+					res.cs;
+				},
+			);
+			[keystring, resstring];
+		});
+	}
 }
-

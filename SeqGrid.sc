@@ -391,5 +391,4 @@ DrumSeq : SCViewHolder {
 		| selector ... args |
 		^Message(this.sg, selector, args).value;
 	}
-
 }

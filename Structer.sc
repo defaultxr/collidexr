@@ -4,15 +4,17 @@
 	* Row
 	* StepSequence
 	* ststop, stplay, lookView, inspectView for SynthDef, Pdef, Ndef
-	* estimateBeats for Pbind, Pchain, Pdef
+	* estimateDur for Pbind, Pchain, Pdef
 	* estimateLength for Pbinop (FIX: submit as pull request to ddwPatterns)
 CURRENT GOAL:
 * fix EventHistory and EventHistView (now in EventHistView.sc)
 * finish CKnob (in Ctl.sc)
+* use Pcomp instead of the from-scratch shit that it is now.
+* make it possible to use this with patterns and such that aren't launched from it (Pd has Pfwd functionality built-in now)
 */
 
 Structer {
-	var <>rows;
+	var patterns, synths, ndefs, items, win, font, eevent, rect, irect, vrect, ccc, beatdiffs, diff, quantbox, rows, name, item, remove, time, cancelAction;
 	var <>elements, <>eevents;
 	var <>ehs;
 	var <>ehvs, <>lvs, <>iv; // EventHistViews, EventHistView views, lookViews, and inspectView
@@ -27,11 +29,11 @@ Structer {
 	var <>events;
 	var <>playing;
 	var <>selected;
-	var <isOpen;
-	var temporoutine;
+	var <isOpen=false;
+	var temporoutine, temporoutineforkfunc;
 	*initClass {
 		Spec.add(\amp, [0, 1, \lin, 0, 0.5, ""]); // normally this has a default of 0 and a warp of 'amp'
-		Spec.add(\out, [0, Server.default.options.numOutputBusChannels-1, \lin, 1, 0, ""]);
+		Spec.add(\out, \audiobus); // alias
 	}
 	*new {
 		^super.new.init;
@@ -53,6 +55,7 @@ Structer {
 			'C-z': {
 				"stumpish emacs".unixCmd;
 			},
+			['C-h', '?']: \help,
 			'C-g': {
 				this.select;
 			},
@@ -89,16 +92,16 @@ Structer {
 				this.query("Add", items, {
 					| val |
 					var type = val.at(0);
-					var name = val[3..];
+					var name = val[3..].asSymbol;
 					switch(type.asSymbol,
 						\P, {
-							this.add(Pdef(name.asSymbol));
+							this.add(Pdef(name));
 						},
 						\S, {
-							this.add(name.asSymbol.def);
+							this.add(name.def);
 						},
 						\N, {
-							this.add(Ndef(name.asSymbol));
+							this.add(Ndef(name));
 						},
 					);
 				});
@@ -179,8 +182,9 @@ Structer {
 				}
 			}
 		};
-		temporoutine.fork(AppClock);
-		CmdPeriod.add({temporoutine.fork(AppClock);});
+		temporoutineforkfunc = {temporoutine.fork(AppClock);};
+		temporoutineforkfunc.value;
+		CmdPeriod.add(temporoutineforkfunc);
 		toolbarview.layout.add(statusview, 4);
 		^toolbarview;
 	}
@@ -331,7 +335,7 @@ Structer {
 			});
 		});
 		mainview.onClose_({
-			CmdPeriod.remove(temporoutine);
+			CmdPeriod.remove(temporoutineforkfunc);
 			isOpen = false;
 		});
 		mainview.refresh;
@@ -562,15 +566,27 @@ Structer {
 		});
 	}
 	message {
-		| obj time=5 raw=false |
+		| obj time raw=false |
 		if(raw, {
-			messagequeue = messagequeue ++ [(obj:obj, time:time, added:Date.localtime.rawSeconds)];
+			messagequeue = messagequeue ++ [(obj:obj, time:time?5, added:Date.localtime.rawSeconds)];
 		}, {
-			if(obj.notNil, {
-				messagequeue = messagequeue ++ if(obj.isKindOf(String), {
-					[(text:obj, time:time, added:Date.localtime.rawSeconds)];
+			if(time.isNil, {
+				time = 0;
+				if(obj.isKindOf(String), {
+					time = obj.split($\n).size.max(5);
 				}, {
-					[(obj:obj, time:time, added:Date.localtime.rawSeconds)];
+					time = 5;
+				});
+			});
+			if(obj.notNil, {
+				var ctime = Date.localtime.rawSeconds;
+				messagequeue = messagequeue ++ if(obj.isKindOf(String), {
+					obj.split($\n).collect({
+						| obji |
+						[(text:obji, time:time, added:ctime)];
+					}).reduce('++');
+				}, {
+					[(obj:obj, time:time, added:ctime)];
 				});
 			});
 		});
@@ -600,6 +616,12 @@ Structer {
 			mainview.focus;
 		});
 		ctf.focus;
+	}
+	help {
+		this.message(this.keymap.helpInfo.collect({
+			| info |
+			info[0] ++ " -- " ++ info[1];
+		}).reduce('++'));
 	}
 }
 
@@ -832,25 +854,25 @@ StepSequence {
 				});
 			});
 		});
-		^prout.play;
+		^prout.play(quant:this.quant);
 	}
 	ststop {
 		^this;
 	}
 	lookView {
 		| parent bounds |
-		^UserView(parent, bounds).background_(Color.black).drawFunc_({
-			| view |
-			var ctls = this.findCtls;
-			Pen.color_(Color.white);
-			if(ctls.size == 0, {
+		var ctls = this.findCtls;
+		if(ctls.size == 0, {
+			^UserView(parent, bounds).background_(Color.black).drawFunc_({
+				| view |
+				Pen.color_(Color.white);
 				Pen.stringAtPoint("No Ctls found. Try C-e to edit.", 0@0);
 				Pen.stringInRect(this.pattern.cs, Rect(0, 20, view.bounds.width, view.bounds.height-20));
-			}, {
-				Pen.stringInRect("Ctls: " ++ (ctls.collect(_.key).reduce('+/+')), Rect(0, 0, view.bounds.width, view.bounds.height));
-			});
-			Pen.draw;
-		}).frameRate_(0.1).animate_(true);
+				Pen.draw;
+			}).frameRate_(0.1).animate_(true);
+		}, {
+			^UserView(parent, bounds).layout_(HLayout(*ctls.collect({|c|c.view.view})));
+		});
 	}
 	inspectView {
 		| parent bounds |
@@ -963,33 +985,106 @@ StepSequence {
 	}
 }
 
-+ Pbind {
-	estimateBeats {
-		var subpatterns = this.patternpairs.reject({
-			| e i |
-			i.even or: { e.isKindOf(Pattern).not };
-		});
-		var min = if(subpatterns.size == 0,
-			inf,
-			{ subpatterns.collect(_.estimateLength).reduce(\min); }
-		);
-		if(min == inf, {
-			^inf;
++ Pattern { // FIX - for some reason, having a Pkey inside a Pbind makes it assume the # of beats in the pattern is 0...
+	estimateDur {
+		if(this.respondsTo(\patternpairs), {
+			var subpatterns = this.patternpairs.reject({
+				| e i |
+				i.even or: { e.isKindOf(Pattern).not };
+			});
+			var min = if(subpatterns.size == 0,
+				inf,
+				{ subpatterns.collect(_.estimateLength).reduce(\min); }
+			);
+			if(min == inf, {
+				^inf;
+			}, {
+				^this.asStream.nextN(min, ()).reject(_.isNil).collect(_[\dur]).sum;
+			});
 		}, {
-			^this.asStream.nextN(min, ()).reject(_.isNil).collect(_[\dur]).sum;
+			DoesNotUnderstandError.throw;
 		});
 	}
 }
 
 + Pdef {
-	estimateBeats {
-		^this.pattern.estimateBeats;
+	estimateDur {
+		^this.pattern.estimateDur;
 	}
 }
 
 + Pchain {
-	estimateBeats {
-		^this.patterns.collect(_.estimateBeats).reduce(\min);
+	estimateDur { // FIX - if one of the Pbinds has no \dur, we don't know how to estimate length from it!!!
+		^this.patterns.collect(_.estimateDur).reject(_.isNil).reduce(\min);
+	}
+}
+
++ Pseq {
+	estimateDur {
+		if(this.repeats == inf, {
+			^inf;
+		}, {
+			// var dursum;
+			// if(this.list[0].isKindOf(Event), {
+			// 	dursum = this.list.collect({
+			// 		| e |
+			// 		e.use({\sustain.envirGet.value;});
+			// 	});
+			// }, {
+			// 	dursum = this.list.collect(_.estimateDur);
+			// });
+			// ^(dursum.sum*this.repeats)
+			^(this.list.collect(_.estimateDur).sum*this.repeats);
+		});
+	}
+}
+
++ Pn {
+	estimateDur {
+		if(this.repeats == inf, {
+			^inf;
+		}, {
+			^(this.repeats * this.pattern.estimateDur);
+		});
+	}
+}
+
++ Ppar {
+	estimateDur {
+		^this.list.collect(_.estimateDur).reduce(\max);
+	}
+}
+
++ Psync {
+	estimateDur {
+		var patl = this.pattern.estimateDur;
+		if(patl < patl.roundUp(this.quant), {
+			^patl.roundUp(this.quant).min(this.maxdur);
+		}, {
+			if(this.maxdur.notNil, {
+				^this.maxdur;
+			}, {
+				^inf;
+			});
+		});
+	}
+}
+
++ Pfunc {
+	estimateDur {
+		^inf;
+	}
+}
+
++ Ptrace {
+	estimateDur {
+		^this.pattern.estimateDur;
+	}
+}
+
++ Pfindur {
+	estimateDur {
+		^this.dur;
 	}
 }
 
@@ -1004,5 +1099,11 @@ StepSequence {
 		}, {
 			^patterns.collect(_.estimateLength).reduce(\min);
 		});
+	}
+}
+
++ Event {
+	estimateDur {
+		^this.dur;
 	}
 }

@@ -1,129 +1,3 @@
-RedLFSR4 {
-
-	*ar {|trig= 0, iseed= 2r1000|
-		var buf= LocalBuf(1).set(iseed);
-		var b= Demand.ar(trig, 0, Dbufrd(buf));		//read
-		var output= b.bitAnd(1).bitXor(b.bitAnd(2).rightShift(1));//linear function
-		b= b.rightShift(1).bitOr(output.leftShift(3));	//shift
-		Demand.ar(trig, 0, Dbufwr(b, buf));			//write
-		^b;
-	}
-
-	*kr {|trig= 0, iseed= 2r1000|
-		var buf= LocalBuf(1).set(iseed);
-		var b= Demand.kr(trig, 0, Dbufrd(buf));		//read
-		var output= b.bitAnd(1).bitXor(b.bitAnd(2).rightShift(1));//linear function
-		b= b.rightShift(1).bitOr(output.leftShift(3));	//shift
-		Demand.kr(trig, 0, Dbufwr(b, buf));			//write
-		^b;
-	}
-}
-
-//--pseudo random waveform 0/1
-RedLFSR4BitStream {
-
-	*ar {|freq= 4, iseed= 2r1000|
-		var lfsr= RedLFSR4.ar(Impulse.ar(freq), iseed);
-		^Demand.ar(Impulse.ar(freq*4), 0, Dseq([lfsr.bitAnd(8).rightShift(3), lfsr.bitAnd(4).rightShift(2), lfsr.bitAnd(2).rightShift(1), lfsr.bitAnd(1)], inf));
-	}
-
-	*kr {|freq= 4, iseed= 2r1000|
-		var lfsr= RedLFSR4.kr(Impulse.kr(freq), iseed);
-		^Demand.kr(Impulse.kr(freq*4), 0, Dseq([lfsr.bitAnd(8).rightShift(3), lfsr.bitAnd(4).rightShift(2), lfsr.bitAnd(2).rightShift(1), lfsr.bitAnd(1)], inf));
-	}
-}
-
-AdCVerb { // copied from the SpeakersCorner quark!
-
-	classvar <>verbose = false, <>maxTime = 0.2;
-
-	*ar { arg in, revTime = 3, hfDamping = 0.1, nOuts = 2, predelay = 0.02,
-		numCombs = 8, numAllpasses = 4, inFilter = 0.6, leakCoeff = 0.995,
-		combScale = 1, apScale = 1, allpassPrimes;
-
-		var timeOneSample;	// used for comb average-filtering;
-		var primeRange;
-
-		var combTimes,	// Table of combtimes
-		allpassTimes,		// delayTimes for allpasses
-		combsOut, apDecay;
-
-		timeOneSample = SampleDur.ir;
-
-		// Initialize comb table for longer reverberations
-		//	 "// combs: ".post;
-		// try creating good prime number based delayTimes with e.g. :
-		//	combTimes = ({ rrand(100, 400).nthPrime } ! numCombs).sort.postln / 40000;
-
-		combTimes = [
-			0.0797949, 			// new prime Numbers
-			0.060825,
-			0.0475902,
-			0.0854197,
-			0.0486931,
-			0.0654572,
-			0.0717437,
-			0.0826624,
-			0.0707511,
-			0.0579574,
-			0.0634719,
-			0.0662292
-		];
-
-		combTimes = combTimes.copyRange(0, numCombs - 1);
-		//	combTimes.postln;
-		// Initialize allpass delay times:
-		//	 "// allpasses: ".post;
-
-		allpassPrimes = allpassPrimes ?? {
-			primeRange = 250 div: numAllpasses;
-			{
-				{ |i| rrand(i + 1 * primeRange, i + 2 * primeRange).nthPrime } ! numAllpasses
-			} ! nOuts
-		};
-
-		allpassTimes = allpassPrimes * (1/44100); // scale into a good time range.
-
-		if (verbose) {
-			"// AdCVerb - allpassPrimes are: \n    %\n\n".postf(allpassPrimes);
-		};
-
-		// mix input down to mono if needed, block DC, round off and pre-delay reverb input.
-		in = DelayN.ar(
-			OnePole.ar(
-				LeakDC.ar(in.asArray.sum, leakCoeff),
-				inFilter
-			),
-			maxTime,
-			predelay
-		);
-
-		// Create an array of combs, with a special trick to make treble decay faster than lows:
-		if (numCombs > 0) {
-			combsOut = CombL.ar(in, maxTime,
-
-			 	(combTimes * combScale)
-				.round(timeOneSample)	// round delay times to integer samples
-			 	+ 						// and add up to half a sample to them:
-				// linear interpolation between samples loses
-				// high freq energy, with the maximum at 0.5.
-			 	(timeOneSample * 0.5 * hfDamping),
-			 	revTime
-			).sum
-		} { combsOut = 0 };
-
-		// allpass decay always is shorter than combs decay
-		apDecay = 1.min(revTime * 0.6);
-
-		// Put the output through nOuts parallel chains of allpass delays
-		^allpassTimes.collect({ |timesCh| var out;
-			out = combsOut + in;
-			timesCh.do { |time| out = AllpassN.ar(out, maxTime, time * apScale, apDecay) };
-			out;
-		});
-	}
-}
-
 // Pan2/Balance2 generalization
 // this is a convenience pseudo-ugen that should "do the right thing" with mono or stereo sounds.
 // easier than switching between Pan2 and Balance2 every time the number of channels changes.
@@ -190,9 +64,9 @@ FMVarSaw : PureUGen { // FM-able VarSaw
 
 // buffer playing
 
-SndP : PureUGen { // 'end' is only for when rate is negative. otherwise, use an envelope to stop the synth.
+SndP : PureUGen { // 'end' is only for when rate is negative.
 	*ar {
-		arg bufnum, rate, start=0, end=1, trigger=1, loop=0, doneAction=0, numChannels=2;
+		arg bufnum, rate=1, start=0, end=1, trigger=1, loop=0, doneAction=0, numChannels=2;
 		var bufframes, stpos, enpos;
 		bufframes = BufFrames.kr(bufnum);
 		rate = if(rate.isNumber, {
@@ -211,7 +85,46 @@ SndP : PureUGen { // 'end' is only for when rate is negative. otherwise, use an 
 	}
 }
 
-Fb1 : UGen {
+// SndP : PureUGen {
+// 	*ar {
+// 		arg bufnum, rate=1, start=0, end=1, trigger=1, doneAction=0, numChannels=2;
+// 		var bufframes, line_dur, startpos, endpos, line;
+// 		bufframes = BufFrames.kr(bufnum);
+// 		line_dur = (bufframes/BufSampleRate.kr(bufnum)*(abs(start-end)))/abs(rate);
+// 		rate = if(rate.isNumber, {
+// 			DC.kr(rate);
+// 		}, rate);
+// 		startpos = ((rate>0)*start)+((rate<0)*end);
+// 		endpos = ((rate>0)*end)+((rate<0)*start);
+// 		line = Env([startpos*bufframes, startpos*bufframes, endpos*bufframes, endpos*bufframes], [0,line_dur,0]).ar(doneAction, trigger, rate.abs.reciprocal);
+// 		^BufRd.ar(numChannels, bufnum, line);
+// 	}
+// }
+
+// SndP : PureUGen {
+// 	*ar {
+// 		arg bufnum, rate, start=0, end=1, trigger=1, doneAction=0, numChannels=2;
+// 		var bufframes, stpos, enpos, line, free;
+// 		bufframes = BufFrames.kr(bufnum);
+// 		rate = if(rate.isNumber, {
+// 			DC.kr(rate);
+// 		}, rate);
+// 		stpos = start*bufframes;
+// 		enpos = end*bufframes;
+// 		line = Sweep.ar(trigger, BufSampleRate.ir(bufnum)*rate)+stpos;
+// 		// line = Select.ar(Latch.ar(rate, trigger)>0, [enpos-line, stpos+line]);
+// 		line = Select.ar(line>0, [enpos-line, stpos+line]);
+// 		free = (line<=enpos)*(line>=stpos);
+// 		line = line*free;
+// 		line = Clip.ar(line, stpos, enpos);
+// 		DetectSilence.ar(HPZ1.ar(line)+(free), 0.0001, 0.001, doneAction);
+// 		^BufRd.ar(numChannels, bufnum, line);
+// 	}
+// }
+
+// feedback
+
+Fb1 : UGen { // single-sample feedback
 	*new { arg func, maxdelaytime, delaytime = maxdelaytime, numChannels, default=0;
 		var buffers, in, out, write;
 		var maxdelaysamples, delaysamples, readoffset, writeoffset;
@@ -275,7 +188,7 @@ Drift : Drift0 {
 Drift1 : PureUGen {
 	*new {
 		| drift=0.001 |
-		^LFNoise1.kr(0.001, drift, 1);
+		^LFNoise1.kr(0.01, drift, 1);
 	}
 }
 
@@ -317,6 +230,57 @@ HardGate : PureUGen {
 	}
 }
 
+AntiClip : PureUGen {
+	*ar {
+		arg in=0, lo=(-1), hi=1;
+		^in*(in>lo)*(in<hi);
+	}
+	*kr {
+		arg in=0, lo=(-1), hi=1;
+		^this.kr(in, lo, hi);
+	}
+}
+
+Skip : UGen {
+	*ar {
+		| in rate=0 mix=0 maxdelaytime=2 |
+		var lb, ns, writing, wenv, reading, pb;
+		if(rate.isSequenceableCollection, { rate = rate[0] });
+		if(mix.isSequenceableCollection, { mix = mix[0] });
+		lb = LocalBuf(maxdelaytime*SampleRate.ir, 2).clear;
+		ns = maxdelaytime*BufSampleRate.ir(lb);
+		writing = BinaryOpUGen('==', mix, 0);
+		wenv = Env.line(0, BufFrames.kr(lb), maxdelaytime).ar(0, mix);
+		// wenv = Phasor.ar(writing, writing*BufRateScale.kr(lb), 0, BufFrames.kr(lb));
+		reading = BinaryOpUGen('!=', mix, 0);
+		// RecordBuf.ar(in, lb, 0, writing, reading, 1, 1);
+		BufWr.ar(in, lb, wenv);
+		// startPos for PlayBuf was: Latch.kr((wenv-((1/rate)*BufSampleRate.kr(lb))), reading)
+		pb = PlayBuf.ar(2, lb, 1*BufRateScale.kr(lb), Impulse.ar(mix.round*rate));
+		^Select.ar(mix, [in, pb]);
+	}
+}
+
+Skip2 : UGen {
+	*ar {
+		| in trig rate=1 mix=0 maxdelaytime=2 |
+		var lb, ns, writing, wenv, reading, pb;
+		if(rate.isSequenceableCollection, { rate = rate[0] });
+		if(mix.isSequenceableCollection, { mix = mix[0] });
+		lb = LocalBuf(maxdelaytime*SampleRate.ir, 2).clear;
+		ns = maxdelaytime*BufSampleRate.ir(lb);
+		writing = BinaryOpUGen('==', mix, 0);
+		wenv = Env.line(0, BufFrames.kr(lb), maxdelaytime).ar(0, mix);
+		// wenv = Phasor.ar(writing, writing*BufRateScale.kr(lb), 0, BufFrames.kr(lb));
+		reading = BinaryOpUGen('!=', mix, 0);
+		// RecordBuf.ar(in, lb, 0, writing, reading, 1, 1);
+		BufWr.ar(in, lb, wenv);
+		// startPos for PlayBuf was: Latch.kr((wenv-((1/rate)*BufSampleRate.kr(lb))), reading)
+		pb = PlayBuf.ar(2, lb, rate*BufRateScale.kr(lb), trig);
+		^Select.ar(mix, [in, pb]);
+	}
+}
+
 RateShift : PureUGen {
 	*ar {
 		arg in=0, rate=1, maxdelaytime=0.2;
@@ -327,43 +291,6 @@ RateShift : PureUGen {
 		^DelayC.kr(in, maxdelaytime, Phasor.kr(1, 1-rate, 0, SampleRate.ir*maxdelaytime)/SampleRate.ir);
 	}
 }
-
-// SndP : PureUGen {
-// 	*ar {
-// 		arg bufnum, rate=1, start=0, end=1, trigger=1, doneAction=0, numChannels=2;
-// 		var bufframes, line_dur, startpos, endpos, line;
-// 		bufframes = BufFrames.kr(bufnum);
-// 		line_dur = (bufframes/BufSampleRate.kr(bufnum)*(abs(start-end)))/abs(rate);
-// 		rate = if(rate.isNumber, {
-// 			DC.kr(rate);
-// 		}, rate);
-// 		startpos = ((rate>0)*start)+((rate<0)*end);
-// 		endpos = ((rate>0)*end)+((rate<0)*start);
-// 		line = Env([startpos*bufframes, startpos*bufframes, endpos*bufframes, endpos*bufframes], [0,line_dur,0]).ar(doneAction, trigger, rate.abs.reciprocal);
-// 		^BufRd.ar(numChannels, bufnum, line);
-// 	}
-// }
-
-// SndP : PureUGen {
-// 	*ar {
-// 		arg bufnum, rate, start=0, end=1, trigger=1, doneAction=0, numChannels=2;
-// 		var bufframes, stpos, enpos, line, free;
-// 		bufframes = BufFrames.kr(bufnum);
-// 		rate = if(rate.isNumber, {
-// 			DC.kr(rate);
-// 		}, rate);
-// 		stpos = start*bufframes;
-// 		enpos = end*bufframes;
-// 		line = Sweep.ar(trigger, BufSampleRate.ir(bufnum)*rate)+stpos;
-// 		// line = Select.ar(Latch.ar(rate, trigger)>0, [enpos-line, stpos+line]);
-// 		line = Select.ar(line>0, [enpos-line, stpos+line]);
-// 		free = (line<=enpos)*(line>=stpos);
-// 		line = line*free;
-// 		line = Clip.ar(line, stpos, enpos);
-// 		DetectSilence.ar(HPZ1.ar(line)+(free), 0.0001, 0.001, doneAction);
-// 		^BufRd.ar(numChannels, bufnum, line);
-// 	}
-// }
 
 PDCos : PureUGen {
 	*ar {
@@ -467,6 +394,81 @@ Pointercast : UGen {
 	}
 }
 
+TAPChorusFlanger : UGen {
+	*ar {
+		arg in, freq=2, depth=50, delay=10, contour=500, phaseShift, dry=0, wet=1;
+		/*
+			# 2159 TAP Chorus/Flanger
+			> k: Frequency [Hz] (0 to 5)
+			> k: L/R Phase Shift [deg] (0 to 180)
+			> k: Depth [%] (0 to 100)
+			> k: Delay [ms] (0 to 100)
+			> k: Contour [Hz] (20 to 20000)
+			> k: Dry Level [dB] (-90 to 20)
+			> k: Wet Level [dB] (-90 to 20)
+			> a: Input_L
+			> a: Input_R
+		*/
+		var left, right;
+		if(in.isSequenceableCollection, {
+			left = in[0];
+			right = in[1];
+		}, {
+			left = in;
+			right = in;
+		});
+		^LADSPA.ar(2, 2159, freq, phaseShift?Rand(0.0, 180.0), depth, delay, contour, dry.remap([0,1],[-90,0]), wet.remap([0,1],[-90,0]), left, right);
+	}
+}
+
+// these are commented out cuz they seem to crash the server...
+
+// PitchScaler : UGen {
+// 	*ar {
+// 		arg in, coef=1;
+// 		/*
+// 			# 1193 Pitch Scaler
+// 			> k: Pitch co-efficient (0.5 to 2)
+// 		*/
+// 		^LADSPA.ar(1, 1193, coef);
+// 	}
+// }
+
+// PitchScalerHQ : UGen {
+// 	*ar {
+// 		arg in, coef=1;
+// 		/*
+// 			# 1194 Higher Quality Pitch Scaler
+// 			> k: Pitch co-efficient (0.5 to 2)
+// 		*/
+// 		^LADSPA.ar(1, 1194, coef);
+// 	}
+// }
+
+// TAPVibrato : UGen {
+// 	*ar {
+// 		arg in, freq=4, depth=10, dry=(-90), wet=0;
+// 		/*
+// 			> k: Frequency [Hz] (0 to 30)
+// 			> k: Depth [%] (0 to 20)
+// 			> k: Dry Level [dB] (-90 to 20)
+// 			> k: Wet Level [dB] (-90 to 20)
+// 		*/
+// 		^LADSPA.ar(1, 2148, freq, depth, dry, wet, in);
+// 	}
+// }
+
+// AMPitchShifter : UGen { 
+// 	*ar {
+// 		arg in, shift=0.75, bufsize=5;
+// 		/*
+// 			> k: Pitch shift (0.25 to 4)
+// 			> k: Buffer size (1 to 7)
+// 		*/
+// 		^LADSPA.ar(1, 1433, shift, bufsize, in);
+// 	}
+// }
+
 /*
 	# 2156 TAP Fractal Doubler
 	> k: Time Tracking (0 to 1)
@@ -532,11 +534,6 @@ Pointercast : UGen {
 */
 
 /*
-	# 1194 Higher Quality Pitch Scaler
-	> k: Pitch co-efficient (0.5 to 2)
-*/
-
-/*
 	# 2979 Rubber Band Mono Pitch Shifter
 	< k: latency
 	> k: Cents (-100 to 100)
@@ -574,27 +571,6 @@ Pointercast : UGen {
 */
 
 /*
-	# 2159 TAP Chorus/Flanger
-	> k: Frequency [Hz] (0 to 5)
-	> k: L/R Phase Shift [deg] (0 to 180)
-	> k: Depth [%] (0 to 100)
-	> k: Delay [ms] (0 to 100)
-	> k: Contour [Hz] (20 to 20000)
-	> k: Dry Level [dB] (-90 to 20)
-	> k: Wet Level [dB] (-90 to 20)
-	> a: Input_L
-	> a: Input_R
-*/
-
-/*
-	# 1193 Pitch Scaler
-	> k: Pitch co-efficient (0.5 to 2)
-	> a: Input
-	< a: Output
-	< k: latency
-*/
-
-/*
 	# 1437 Giant flange
 	> k: Double delay
 	> k: LFO frequency 1 (Hz) (0 to 30)
@@ -614,28 +590,4 @@ Pointercast : UGen {
 	< a: Down out
 	< a: Up out
 */
-
-// TAPVibrato : UGen { // doesn't work.. crashes the server...
-// 	*ar {
-// 		arg in, freq=4, depth=10, dry=(-90), wet=0;
-// 		/*
-// 			> k: Frequency [Hz] (0 to 30)
-// 			> k: Depth [%] (0 to 20)
-// 			> k: Dry Level [dB] (-90 to 20)
-// 			> k: Wet Level [dB] (-90 to 20)
-// 		*/
-// 		^LADSPA.ar(1, 2148, freq, depth, dry, wet, in);
-// 	}
-// }
-
-// AMPitchShifter : UGen { 
-// 	*ar {
-// 		arg in, shift=0.75, bufsize=5;
-// 		/*
-// 			> k: Pitch shift (0.25 to 4)
-// 			> k: Buffer size (1 to 7)
-// 		*/
-// 		^LADSPA.ar(1, 1433, shift, bufsize, in);
-// 	}
-// }
 

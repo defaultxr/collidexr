@@ -1,7 +1,7 @@
 /*
-PianoRoll - a piano roll for SuperCollider!
-TODO:
-* make sure ySpec can be \freq, \instrument, etc.
+	PianoRoll - a piano roll for SuperCollider!
+	TODO:
+	* make sure ySpec can be \freq, \instrument, etc.
 */
 
 PianoRoll : SCViewHolder {
@@ -9,6 +9,7 @@ PianoRoll : SCViewHolder {
 	var <translate;
 	var <grid=true;
 	var <>selectedStrokeColor;
+	var <>highlightedStrokeColor;
 	var <ySpec=\midinote;
 	var <vSize = 20; // size of each row in pixels
 	var <vquant;
@@ -17,11 +18,14 @@ PianoRoll : SCViewHolder {
 	var <sidebarWidth = 40, <topbarHeight = 20;
 	
 	var <>selected; // list of selected notes
+	var <>highlighted; // list of highlighted notes
 	var clickedOn, mouseDownPoint, mouseDownButton, dragAction=nil; // mouse actions context info
-	var selectionRect,ghosts;
+	var selectionRect, ghosts;
 	var tview, uv;
 	var <sequence;
 	var newNoteSustain=\last;
+
+	var <>looping=false;
 
 	*initClass {
 		Spec.add(\midinote, [0, 127, \lin, 1, 60]); // i have no idea why the default step for \midinote is 0...
@@ -43,6 +47,8 @@ PianoRoll : SCViewHolder {
 		translate = Point(0, 0);
 		selected = List.new;
 		selectedStrokeColor = Color.blue;
+		highlighted = List.new;
+		highlightedStrokeColor = Color.green;
 		uv = UserView(parent, bounds).background_(Color.black);
 		tview = UserView(parent, bounds).acceptsMouse_(false);
 		view = UserView(parent, bounds).layout_(StackLayout(tview, uv).mode_(\stackAll));
@@ -91,15 +97,21 @@ PianoRoll : SCViewHolder {
 				Pen.stroke;
 			});
 			Pen.translate(sidebarWidth+translate.x, topbarHeight+translate.y);
-			sequence.asList.do {
+			sequence.rawList.do {
 				| note n |
 				if(note.notNil, {
 					var rect = this.noteToRect(note);
-					if(this.isSelected(note), {
-						Pen.color_(Color.blue);
-					}, {
-						Pen.color_(Color.red);
-					});
+					Pen.color_(case(
+						{ this.isSelected(note) }, {
+							selectedStrokeColor;
+						},
+						{ this.isHighlighted(note) }, {
+							highlightedStrokeColor;
+						},
+						true, {
+							Color.red;
+						},
+					));
 					Pen.addRect(rect);
 					Pen.draw(3);
 					Pen.color_(Color.black);
@@ -113,11 +125,12 @@ PianoRoll : SCViewHolder {
 				Pen.color_(Color.red(0.5));
 				Pen.addRect(Rect(0, 0, view.bounds.width, topbarHeight));
 				Pen.fill;
-				Pen.color_(Color.black);
 				(view.bounds.width/beatSize).ceil.do({
 					| n |
 					var xpos = ((n+hOffset)*beatSize)+sidebarWidth+translate.x;
-					Pen.stringCenteredIn((n+hOffset).asString, Rect(xpos, 0, beatSize, topbarHeight));
+					var num = (n+hOffset);
+					Pen.color_(if(num < this.sequence.dur, Color.black, Color.grey(0.5))); // show dur of sequence
+					Pen.stringCenteredIn(num.asString, Rect(xpos, 0, beatSize, topbarHeight));
 				});
 				Pen.stroke;
 			});
@@ -169,64 +182,82 @@ PianoRoll : SCViewHolder {
 		});
 		uv.mouseDownAction_({
 			| view x y modifiers buttonNumber clickCount |
-			clickedOn = this.getAtPoint(x@y);
-			mouseDownPoint = x@y;
-			mouseDownButton = buttonNumber;
-			switch(buttonNumber,
-				0, {
-					switch(clickCount,
-						1, { // left click to select notes.
-							if(clickedOn.size > 0, { // clicked on something
-								var nrect = this.noteToRect(clickedOn[0]);
-								dragAction = nil;
-								if(( buttonNumber == 0 ) and: { (this.untranslatePoint(nrect.rightBottom) - (x@y)).x < 5 }, {
-									dragAction = \resize;
-								});
-							});
-							if(modifiers.isShift, {
-								clickedOn.do({
-									| item |
-									if(this.isSelected(item), {
-										this.deselect(item);
-									}, {
-										this.select(item);
-									});
-								});
-							}, {
-								if(clickedOn.size == 0, {
-									this.deselectAll;
-								}, {
-									if(this.isSelected(clickedOn[0]).not, {
-										this.deselectAll;
-									});
-									if(selected.size == 0, {
-										clickedOn.do({
-											| item |
-											this.select(item);
+			case(
+				{ x <= sidebarWidth and: { y <= topbarHeight } }, { // clicked in the top left bit
+					if(clickCount == 2, {
+						"EVENT EDIT".postln; // FIX
+					});
+				},
+				{ x <= sidebarWidth }, { // clicked on the sidebar
+					"sidebar".postln;
+				},
+				{ y <= topbarHeight }, { // clicked on the top bar
+					if(buttonNumber == 1, { // right click to set dur...
+						var beat = this.pointToBeat((x@y));
+						this.sequence.dur_(if(beat < 1, nil, beat.round));
+					});
+				},
+				true, { // clicked in the note area
+					clickedOn = this.getAtPoint(x@y);
+					mouseDownPoint = x@y;
+					mouseDownButton = buttonNumber;
+					switch(buttonNumber,
+						0, {
+							switch(clickCount,
+								1, { // left click to select notes.
+									if(clickedOn.size > 0, { // clicked on something
+										var nrect = this.noteToRect(clickedOn[0]);
+										dragAction = nil;
+										if(( buttonNumber == 0 ) and: { (this.untranslatePoint(nrect.rightBottom) - (x@y)).x < 5 }, {
+											dragAction = \resize;
 										});
 									});
-								});
-							});
+									if(modifiers.isShift, {
+										clickedOn.do({
+											| item |
+											if(this.isSelected(item), {
+												this.deselect(item);
+											}, {
+												this.select(item);
+											});
+										});
+									}, {
+										if(clickedOn.size == 0, {
+											this.deselectAll;
+										}, {
+											if(this.isSelected(clickedOn[0]).not, {
+												this.deselectAll;
+											});
+											if(selected.size == 0, {
+												clickedOn.do({
+													| item |
+													this.select(item);
+												});
+											});
+										});
+									});
+								},
+								2, { // double left-click to make a note
+									if((clickedOn.size > 0) and: { selected.size > 0 }, {
+										Synth(\snare1);
+										// edit the note's properties directly - FIX
+									}, {
+										this.add((
+											midinote: (this.pointToY(x@y)+(vquant/2)).round(vquant),
+											sustain: this.newNoteSustain,
+											beat: (this.pointToBeat(x@y)-(beatquant/2)).round(beatquant),
+										));
+									});
+								},
+							);
 						},
-						2, { // double left-click to make a note
-							if((clickedOn.size > 0) and: { selected.size > 0 }, {
-								Synth(\snare1);
-								// edit the note's properties directly - FIX
-							}, {
-								this.add((
-									midinote: (this.pointToY(x@y)+(vquant/2)).round(vquant),
-									sustain: this.newNoteSustain,
-									beat: (this.pointToBeat(x@y)-(beatquant/2)).round(beatquant),
-								));
+						1, {
+							this.getAtPoint(x@y).do({
+								| item |
+								this.delete(item);
 							});
 						},
 					);
-				},
-				1, {
-					this.getAtPoint(x@y).do({
-						| item |
-						this.delete(item);
-					});
 				},
 			);
 			this.refresh;
@@ -241,7 +272,6 @@ PianoRoll : SCViewHolder {
 							this.translatePoint(mouseDownPoint),
 							this.translatePoint(x@y),
 						);
-						// highlights = this.getInRect(untranslatedRect); // TODO: highlight items that will be selected on mouse up
 					}, { // if we clicked on something, move or resize all selected notes
 						if(dragAction == \resize, { // FIX: just find the % of the resized note and apply it to all notes \sustain and \beat
 							var drag, c_beats, start, end, oldsize, newsize;
@@ -323,6 +353,7 @@ PianoRoll : SCViewHolder {
 			newtrans.y = (newtrans.y + (yDelta.sign*vSize));
 			this.translate_(newtrans);
 		});
+		this.centerOn(\midinote.asSpec.default);
 	}
 	bounds_ {
 		| bounds |
@@ -387,7 +418,7 @@ PianoRoll : SCViewHolder {
 		var beat = this.pointToBeat(point);
 		var yVal = this.pointToY(point).ceil;
 		// point.postcs;
-		^sequence.asList.select({
+		^sequence.rawList.select({
 			| event |
 			var end = event[\beat] + event[\sustain];
 			((event[\beat] <= beat) and: { beat < end } and: { event[\midinote]?60 == yVal });
@@ -397,7 +428,7 @@ PianoRoll : SCViewHolder {
 		| obj |
 		selected.do({
 			| item |
-			if(item.trueCompare(obj), {
+			if(item.noteCompare(obj), {
 				^true;
 			});
 		});
@@ -411,10 +442,42 @@ PianoRoll : SCViewHolder {
 	}
 	deselect {
 		| obj |
-		selected = selected.reject(_.trueCompare(obj));
+		selected = selected.reject(_.noteCompare(obj));
 	}
 	deselectAll {
 		selected = [];
+	}
+	isHighlighted {
+		| obj |
+		highlighted.do({
+			| item |
+			if(item.noteCompare(obj), {
+				^true;
+			});
+		});
+		^false;
+	}
+	highlight {
+		| obj |
+		if(this.isHighlighted(obj).not, { // FIX: don't select things that don't exist
+			highlighted = highlighted.add(obj);
+		});
+		this.refresh;
+	}
+	unhighlight {
+		| obj |
+		highlighted = highlighted.reject(_.noteCompare(obj));
+		this.refresh;
+	}
+	unhighlightAll {
+		highlighted = [];
+	}
+	notePlay {
+		| event name beat |
+		if(event.notNil, {
+			{this.highlight(event);}.defer(0);
+			{this.unhighlight(event)}.defer(event[\dur].beatstime);
+		});
 	}
 	pointToBeat { // return the "beat" at the point. must be a non-translated point. - FIX
 		| point | // should also accept numbers instead of just Points.
@@ -491,6 +554,8 @@ PianoRoll : SCViewHolder {
 	}
 	centerOn { // FIX
 		| num |
+		var numRows = view.bounds.height/vSize;
+		this.topOn(num+(numRows/2));
 	}
 	topOn { // make the number the top row in the view
 		| num |
@@ -499,36 +564,35 @@ PianoRoll : SCViewHolder {
 	isPlaying {
 		^Pdef(\__pianoRoll).isPlaying;
 	}
-	play { // FIX
+	play {
 		| start end loop=false |
+		Pdef(\__pianoRoll, PnC(Plazy({
+			var pattern = this.sequence.asPattern;
+			var pbeats = this.sequence.dur;
+			Pfwd(Psync(pattern, pbeats, pbeats), Message(this, \notePlay), \ );
+		}), {true.yield;loop{this.looping.yield;}}.asRoutine));
 		if(loop, {
-			Pdef(\__pianoRoll, Pn(Plazy({
-				var pattern = this.sequence.asPattern;
-				var pbeats = this.sequence.length;
-				Psync(pattern, pbeats, pbeats);
-			})));
-			Pdef(\__pianoRoll).play;
+			this.looping = true;
 		}, {
-			this.sequence.play;
+			this.looping = false;
 		});
+		Pdef(\__pianoRoll).play;
 	}
 	stop {
-		if(this.isPlaying, {
-			Pdef(\__pianoRoll).stop;
-		});
+		this.looping = false;
+		Pdef(\__pianoRoll).stop;
 	}
 	playPause {
 		| start end loop=false |
 		if(this.isPlaying, {
 			this.stop;
 		}, {
-			this.play(start, end, loop:loop);
+			\play.postln;
+			this.play(start, end, loop);
 		});
 	}
 	refresh {
 		view.refresh;
-	}
-	value {
 	}
 	help {
 		[
@@ -544,5 +608,13 @@ PianoRoll : SCViewHolder {
 			| msg |
 			this.message(msg);
 		});
+	}
+}
+
++ Event {
+	noteCompare { // compare two events by their \beat and \midinote keys.
+		// FIX - will need to consider other stuff instead of \midinote when other ySpecs are supported by PianoRoll.
+		| event |
+		^(event[\beat] == this[\beat] and: { event[\midinote] == this[\midinote] });
 	}
 }

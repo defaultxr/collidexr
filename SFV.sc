@@ -5,46 +5,62 @@ SFV {
 	var <playMode;
 	var synth, oscFunc;
 	var <keymap, win, userview, mouseDown=false, <>messagequeue;
-	*initClass {
+	*initClass {		
 		var sfvsp = {
 			| numChannels=2 doneAction=2 bufnum=0 rate=1 start=0 end=1 retrig=1 loop=0 |
 			var bufframes, line_dur, startpos, endpos, line;
 			bufframes = BufFrames.kr(bufnum);
-			line_dur = (bufframes/BufSampleRate.kr(bufnum)*(abs(start-end)))/abs(rate);
-			startpos = ((rate>0)*start)+((rate<0)*end);
-			startpos = startpos * bufframes;
-			endpos = ((rate>0)*end)+((rate<0)*start);
-			endpos = endpos * bufframes;
-			line = Env([startpos, startpos, endpos, endpos], [0, line_dur, 0], \lin, loop*2, 0).ar(doneAction, retrig);
+			line_dur = abs(start-end)/BufSampleRate.kr(bufnum);
+			// line_dur = (bufframes/(abs(start-end)))/abs(rate);
+			// line = Phasor.ar(0, rate/SampleRate.ir, start, end, start);
+			line = Env([start, start, end, end], [0, line_dur, 0], \lin, loop*2, 0).ar(doneAction, retrig);
 			SendReply.kr(Impulse.kr(oscReplyRate), "/sfv/position", [line]);
 			BufRd.ar(numChannels, bufnum, line);
 		};
 
-		SynthDef(\_sfv_sp, {
-			| amp=0.5 pan=0 out=0 |
-			var output;
-			output = SynthDef.wrap(sfvsp, prependArgs:[2]);
-			output = Balance2.ar(output[0], output[1], pan);
-			Out.ar(out, output * amp);
-		}).add;
+		Server.default.doWhenBooted({
 
-		SynthDef(\_sfv_spm, {
-			| amp=0.5 pan=0 out=0 |
-			var output;
-			output = SynthDef.wrap(sfvsp, prependArgs:[1]);
-			output = Pan2.ar(output, pan);
-			Out.ar(out, output * amp);
-		}).add;
+			SynthDef(\_sfv_sp, {
+				| amp=0.5 pan=0 out=0 |
+				var output;
+				output = SynthDef.wrap(sfvsp, prependArgs:[2]);
+				output = Balance2.ar(output[0], output[1], pan);
+				Out.ar(out, output * amp);
+			}).add;
 
-		SynthDef(\_sfv_onsets, {
-			| bufnum |
-			var phs, output, trigs, ampl;
-			phs = Line.ar(0, BufFrames.kr(bufnum), BufDur.kr(bufnum), doneAction:2);
-			output = BufRd.ar(2, bufnum, phs).sum/2;
-			trigs = Coyote.kr(output);
-			ampl = Amplitude.ar(output);
-			SendReply.kr(trigs, '/sfv/onsets', [phs, ampl]);
-		}).add;
+			SynthDef(\_sfv_spl, {
+				| doneAction=2 bufnum=0 rate=1 start=0 end=1 retrig=1 amp=0.5 pan=0 out=0 |
+				var bufframes, line_dur, fbn, line, output;
+				bufframes = BufFrames.kr(bufnum);
+				line_dur = abs(start-end)/BufSampleRate.kr(bufnum);
+				line = Phasor.ar(0, BufRateScale.kr(bufnum)*rate, start, end, start);
+				SendReply.kr(Impulse.kr(oscReplyRate), "/sfv/position", [line]);
+				output = BufRd.ar(2, bufnum, line);
+				output = Balance2.ar(output[0], output[1], pan);
+				Out.ar(out, output * amp);
+			}).add;
+
+			SynthDef(\_sfv_spm, {
+				| amp=0.5 pan=0 out=0 |
+				var output;
+				output = SynthDef.wrap(sfvsp, prependArgs:[1]);
+				output = Pan2.ar(output, pan);
+				Out.ar(out, output * amp);
+			}).add;
+
+			SynthDef(\_sfv_onsets, {
+				| bufnum start=0 end=(-1) |
+				var dur, phs, output, trigs, ampl;
+				end = ((end<0)*BufFrames.kr(bufnum))+((end>=0)*end);
+				dur = ((end<0)*BufDur.kr(bufnum))+((end>=0)*((end-start)/BufSampleRate.kr(bufnum)));
+				phs = Line.ar(start, end, dur, doneAction:2);
+				output = BufRd.ar(2, bufnum, phs).sum/2;
+				trigs = Coyote.kr(output);
+				ampl = Amplitude.ar(output);
+				SendReply.kr(trigs, '/sfv/onsets', [phs, ampl]);
+			}).add;
+
+		});
 
 	}
 	*new {
@@ -104,46 +120,22 @@ SFV {
 				userview.refresh;
 			});
 		};
-		keymap = Keymap.new.binds(( // AMM = audacity muscle memory
+		keymap = Keymap([ // AMM = audacity muscle memory
 			// load/save stuff
-			'C-x C-s': {
-				this.save;
-			},
-			'C-o': { // "open"
-				this.load;
-			},
+			'C-x C-s', \save,
+			'C-o', \load, // "open"
 			// view stuff
-			'C-e': { // C-e - zoom to selection (AMM)
-				this.zoomToSelection;
-			},
-			'C-1': { // zoom in (AMM)
-				this.zoom(1/2);
-			},
-			'C-3': { // zoom out (AMM)
-				this.zoom(2);
-			},
+			'C-e', \zoomToSelection, // AMM
+			'C-1', Message(this, \zoom, [1/2]), // AMM
+			'C-3', Message(this, \zoom, [2]), // zoom out (AMM)
 			// selection stuff
-			'space': {
-				this.playSelection;
-			},
-			'C-left': {
-				this.mode = \left;
-				this.focus(\left);
-			},
-			'C-right': {
-				this.mode = \right;
-				this.focus(\right);
-			},
-			'C-up': {
-				this.mode = \expand;
-				this.focus;
-			},
-			'C-down': {
-				this.mode = \shrink;
-				this.focus;
-			},
-			'left': {
-				var prefix = sfv.viewFrames*0.01;
+			'space', \playSelection,
+			'C-left', Message(this, \mode_, [\left]),
+			'C-right', Message(this, \mode_, [\right]),
+			'C-up', Message(this, \mode_, [\expand]),
+			'C-down', Message(this, \mode_, [\shrink]),
+			'left', {
+				var prefix = (sfv.viewFrames*0.01).max(1);
 				switch(this.mode,
 					\left, {
 						this.resize(-1*prefix);
@@ -163,8 +155,8 @@ SFV {
 					},
 				);
 			},
-			'right': {
-				var prefix = sfv.viewFrames*0.01;
+			'right', {
+				var prefix = (sfv.viewFrames*0.01).max(1);
 				switch(this.mode,
 					\left, {
 						this.resize(1*prefix);
@@ -184,44 +176,38 @@ SFV {
 					},
 				);
 			},
-			'home': {
+			'home', {
 				this.setSelection(0);
+				this.focusOn(0);
 			},
-			'end': {
+			'end', {
 				this.setSelection(sfv.numFrames);
+				this.focusOn(sfv.numFrames);
 			},
-			'M-left': {
+			'M-left', {
 			},
-			'M-right': {
+			'M-right', {
 			},
 			// marks stuff
-			'C-i': { // "insert" mark (AMM)
-				this.mark;
-			},
-			'C-j': { // "join" sections (remove marks in the range - AMM)
-				this.unmark;
-			},
+			'C-i', \mark, // "insert" mark (AMM)
+			'C-j', \unmark, // "join" sections (remove marks in the range - AMM)
 			// other stuff
-			'C-g': {
-				this.refresh;
-			},
-			'C-c C-s': { // stop all audio
-				CmdPeriod.run;
-			},
-			'C-u C-s': { // prefix / switch modes
+			'C-g', \refresh,
+			'C-c C-s', Message(CmdPeriod, \run), // stop all audio
+			'C-u C-s', { // prefix / switch modes
 				var modes = [\left, \right, \expand, \shrink];
 				this.mode = modes.wrapAt((modes.indexOf(this.mode)?0)+1);
 				this.focus;
 			},
-			'C-u C-p': {
+			'C-u C-p', {
 				var modes = [\mono, \poly, \toggle, \loop];
 				this.playMode_(modes.wrapAt((modes.indexOf(this.playMode)?0)+1));
 				this.focus;
 			},
-			['C-h', '?']: { // help
-				this.help;
-			},
-		));
+			'C-m a', \automark,
+			['C-h', '?'], \help,
+			'M-x', \exec,
+		]);
 		userview = UserView(win, win.view.bounds).resize_(5);
 		userview.acceptsMouse = false;
 		userview.drawFunc = {
@@ -229,22 +215,37 @@ SFV {
 			var start = csel[0].asString, end = (csel[0]+csel[1]).asString;
 			var ps = (csel[0]/sfv.numFrames).round(precision).asString, pe = (csel[0]+csel[1]/sfv.numFrames).round(precision).asString;
 			var firstframe = this.firstFrame;
+			Pen.font_(font);
 			if(markers.notNil, {
 				markers.markers.do {
 					| mark num |
 					var frame = mark[\frame];
-					Pen.strokeColor = mark[\color]??Color.white;
+					var text = mark[\text];
+					Pen.color = mark[\color]??Color.white;
 					if((frame > firstframe) && (frame < (firstframe + sfv.viewFrames)), {
-						var xpos = ((frame-firstframe)/sfv.viewFrames)*sfv.bounds.width;
+						var xpos = this.prFrameToXCoordinate(frame);//((frame-firstframe)/sfv.viewFrames)*sfv.bounds.width;
+						var ypos = (sfv.bounds.height/2)-5;
 						Pen.line(xpos@0, xpos@sfv.bounds.height);
+						Pen.stringAtPoint(frame.asString, xpos@ypos);
+						Pen.stringAtPoint(text, xpos@(ypos+10));
 					});
 					Pen.stroke;
 				};
 			});
+			// time text
+			Pen.color_(Color.gray);
+			10.do({
+				| n |
+				var pixel = (n*(sfv.bounds.width/10));
+				var frame = this.firstFrame + ((n/10)*sfv.viewFrames);
+				Pen.stringAtPoint(frame.round.asString, pixel@0);
+			});
+			this.sel.values.asSet.do({ // if the selection has a length of 0, we don't want to draw the string twice.
+				| frame |
+				Pen.stringAtPoint(frame.round.asString, Point(this.prFrameToXCoordinate(frame), 10));
+			});
 			// "OSD"
-			Pen.font = font;
-			Pen.fillColor = Color.white;
-			Pen.strokeColor = Color.white;
+			Pen.color_(Color.white);
 			if(messagequeue.size > 0, {
 				messagequeue = messagequeue.select({
 					| item |
@@ -263,14 +264,23 @@ SFV {
 			Pen.stringAtPoint(if(csel[1] != 0,
 				{ "Start: " ++ start ++ " (" ++ ps ++ ") End: " ++ end ++ " (" ++ pe ++ ") Length: " ++ csel[1].asString; },
 				{ "Frame: " ++ start ++ " (" ++ ps ++ ")" }), sfv.bounds.leftBottom + (2@(-15)));
+			Pen.stringRightJustIn("Selection:"+mode.asString+"Play:"+playMode.asString, Rect(2, sfv.bounds.bottom-15, sfv.bounds.width-4, 15));
 			Pen.stroke;
 		};
 		win.view.keyDownAction = {
 			| view char modifiers unicode keycode |
 			var res = keymap.keyDown(Keymap.stringifyKey(modifiers, keycode));
-			if(res.isFunction, {
-				res.value(sfv);
-			});
+			case(
+				{ res.isKindOf(Function) }, {
+					res.value(sfv);
+				},
+				{ res.isKindOf(Symbol) }, {
+					Message(this, res, []).value;
+				},
+				{ res.isKindOf(Message) }, {
+					res.value;
+				},
+			);
 		};
 		win.view.keyUpAction = {
 			| view char modifiers unicode keycode |
@@ -281,9 +291,17 @@ SFV {
 		if(file.notNil, {
 			this.load(file);
 		});
-		this.dataReset;
 		mode = \expand;
 		win.front;
+	}
+	prFrameToXCoordinate {
+		| frame |
+		var firstframe = this.firstFrame;
+		// ^if(frame < firstframe or: { (frame > (firstframe + sfv.viewFrames)) }, { // the specified frame is out of view.
+		// 	nil;
+		// }, {
+		^((frame-firstframe)/sfv.viewFrames)*sfv.bounds.width;
+		// });
 	}
 	// window stuff
 	// show { // FIX - make this work again.
@@ -291,10 +309,6 @@ SFV {
 	// 	open = true;
 	// }
 	// load/save stuff
-	dataReset {
-		markType = 0;
-		markers = Markers.new;
-	}
 	refresh {
 		userview.refresh;
 	}
@@ -348,7 +362,7 @@ SFV {
 	loadAudioFile {
 		| file |
 		if(file.notNil, {
-			var converted = file.convertSong;
+			var converted = file.convertToWav;
 			audiofile = file;
 			if(buffer.notNil, {
 				"Freeing old buffer.".postln;
@@ -359,7 +373,8 @@ SFV {
 			sfv.soundfile = soundfile;
 			sfv.read(0, soundfile.numFrames);
 			buffer = Buffer.read(Server.default, converted);
-			this.dataReset;
+			markType = 0;
+			markers = Markers.new;
 			this.markers.total_(soundfile.numFrames);
 		}, {
 			"Error: No file was provided.".postln;
@@ -434,6 +449,11 @@ SFV {
 		| theMode |
 		if([\left, \right, \expand, \shrink].includes(theMode), {
 			mode = theMode;
+			if([\left, \right].includes(theMode), {
+				this.focus(theMode);
+			}, {
+				this.focus;
+			});
 			this.message("Mode:"+theMode.asString);
 		});
 	}
@@ -456,8 +476,6 @@ SFV {
 	}
 	select {
 		| start end |
-		var se = [start, end].replace(-1, sfv.numFrames).clip(0, sfv.numFrames);
-		var newStart, newEnd;
 		if(end.isNil, {
 			case(
 				{ start.class == Array }, {
@@ -468,15 +486,16 @@ SFV {
 				},
 			);
 		}, {
-			se = se.sort;
+			var se = [start, end].replace(-1, sfv.numFrames).clip(0, sfv.numFrames).sort;
+			var newStart, newEnd;
 			newStart = se[0];
 			newEnd = se[1];
+			sfv.setSelection(sfv.currentSelection, [newStart, newEnd-newStart]);
+			if(playMode == \loop and: { synth.notNil } and: { synth.isRunning }, {
+				synth.set(\start, newStart, \end, newEnd);
+			});
+			this.refresh;
 		});
-		sfv.setSelection(sfv.currentSelection, [newStart, newEnd-newStart]);
-		if(playMode == \loop and: { synth.notNil } and: { synth.isRunning }, {
-			synth.set(\start, newStart/sfv.numFrames, \end, newEnd/sfv.numFrames);
-		});
-		this.refresh;
 	}
 	setSelection {
 		| start end |
@@ -525,7 +544,12 @@ SFV {
 		synthRunning = (synth.notNil and: {synth.isRunning});
 		makeSynth = {
 			| loop=false |
-			synth = Synth(if(soundfile.numChannels == 1, \_sfv_spm, \_sfv_sp), [\rate, 1, \start, start/soundfile.numFrames, \end, end/soundfile.numFrames, \bufnum, buffer, \loop, loop.asInteger]).track;
+			var def = if(loop, {
+				if(soundfile.numChannels == 1, \_sfv_spml, \_sfv_spl);
+			}, {
+				if(soundfile.numChannels == 1, \_sfv_spm, \_sfv_sp);
+			});
+			synth = Synth(def, [\rate, 1, \start, start, \end, end, \bufnum, buffer, \loop, loop.asInteger]).track;
 		};
 		switch(playMode,
 			\mono, {
@@ -581,29 +605,78 @@ SFV {
 		});
 	}
 	automark { // FIX - move this to a more appropriate class.. perhaps as an extension of Buffer?
+		| start end | // in frames
 		OSCdef(\_sfv_onsets_osc, {
 			| msg |
 			{this.mark(msg[3]);}.fork(AppClock);
 		}, '/sfv/onsets');
-		Synth(\_sfv_onsets, [\bufnum, buffer]);
+		if(start.isNil, {
+			start = this.sel.s?0;
+			end = this.sel.e?sfv.numFrames;
+		});
+		Synth(\_sfv_onsets, [\bufnum, buffer, \start, start, \end, end]);
 	}
 	// other stuff
 	help {
-		[
-			"C-x C-s -- Save",
-			"C-o -- Open",
-			"C-e -- Zoom to selection",
-			"C-1 -- Zoom in",
-			"C-3 -- Zoom out",
-			"Space -- Play",
-			"C-i -- Mark",
-			"C-j -- Join (Delete marks)",
-			"C-c C-s -- CmdPeriod",
-			"C-u C-s -- Switch selection mode",
-			"C-u C-p -- Switch play mode",
-		].do({
+		this.keymap.helpInfo.collect({
+			| info |
+			info[0] ++ " -- " ++ info[1];
+		})
+		// [
+		// 	"C-x C-s -- Save",
+		// 	"C-o -- Open",
+		// 	"C-e -- Zoom to selection",
+		// 	"C-1 -- Zoom in",
+		// 	"C-3 -- Zoom out",
+		// 	"Space -- Play",
+		// 	"C-i -- Mark",
+		// 	"C-j -- Join (Delete marks)",
+		// 	"C-c C-s -- CmdPeriod",
+		// 	"C-u C-s -- Switch selection mode",
+		// 	"C-u C-p -- Switch play mode",
+		// 	"M-x -- Execute command",
+		// ]
+		.do({
 			| msg |
 			this.message(msg);
+		});
+	}
+	query { // TODO: add history for each query by name ('text' arg).
+		| text completions action cancelAction |
+		var ctf = CompletingTextField(sfv, Rect(sfv.bounds.width/2-100, 0, 200, 25));
+		ctf.completions = completions.collect(_.asString);
+		cancelAction = case(
+			{ cancelAction.isNil }, { { this.message("Cancelled."); } },
+			{ cancelAction == false }, { nil },
+			{ true }, { cancelAction },
+		);
+		ctf.keyDownAction_({
+			| view char modifiers unicode keycode |
+			if(keycode == 9 /* esc */ or: {modifiers.isCtrl and: {unicode == 7} /* C-g */}, {
+				cancelAction.value;
+				ctf.remove;
+				sfv.focus;
+				true;
+			});
+		});
+		ctf.action_({
+			| ctfv |
+			action.value(ctfv.string);
+			ctfv.remove;
+			sfv.focus;
+		});
+		ctf.focus;
+	}
+	exec {
+		| command |
+		if(command.isNil, {
+			this.query("Execute:", this.class.methods.collect(_.name), {
+				| val |
+				this.exec(val);
+			},
+			);
+		}, {
+			Message(this, command.asSymbol, []).value;
 		});
 	}
 }

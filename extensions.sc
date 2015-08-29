@@ -1,17 +1,25 @@
 // my class extensions
 
-XR { // FIX: research the Library class
-	classvar <>fileDict, <>monoFileDict;
+XR {
+	classvar <>fileDict, <>monoFileDict, <>ndefLineSynths;
 	*initClass { // also using this initClass instead of String's because String already has one.
 		fileDict = Dictionary.new;
 		monoFileDict = Dictionary.new;
+		ndefLineSynths = Dictionary.new;
 
 		Server.default.doWhenBooted({
-			SynthDef(\speakSynth, {
-			| bufnum=0 amp=0.5 out=0 |
-			var reader = DiskIn.ar(1, bufnum, 0);
-			FreeSelfWhenDone.kr(reader);
-			Out.ar(out, reader!2 * amp);
+			SynthDef(\__speakSynth, {
+				| bufnum=0 amp=0.5 out=0 |
+				var reader = DiskIn.ar(1, bufnum, 0);
+				FreeSelfWhenDone.kr(reader);
+				Out.ar(out, reader!2 * amp);
+			}).add;
+
+			SynthDef(\line, {
+				| start=0 end=1 time=1 curve=0 out=0 |
+				var output;
+				output = Env([start, start, end, end], [0, time, 0], [0, curve, 0]).kr(2);
+				Out.kr(out, output);
 			}).add;
 		});
 	}
@@ -48,10 +56,28 @@ XR { // FIX: research the Library class
 	def {
 		^this.desc.def;
 	}
+	pdef {
+		^Pdef(this);
+	}
 	resendSynthDef {
 		^((this.def.cs++".add;").interpret);
 	}
 	requireSynthDef {
+	}
+	bd {
+		^Bdef(this);
+	}
+	bdef {
+		^Bdef(this);
+	}
+	ndef {
+		^Ndef(this);
+	}
+	nd {
+		^Ndef(this);
+	}
+	b {
+		^Bdef(this).buffer;
 	}
 }
 
@@ -66,81 +92,101 @@ XR { // FIX: research the Library class
 	p { // shortcut for standardizePath because i hate typing long words with CamelCase.
 		^this.standardizePath;
 	}
-	b { // buffer
-		/*
-			Loads a buffer with the sound specified by this string.
-			You can call this method as much as you want on the same file because it keeps track of which files are loaded, only reading the file into a new Buffer if one doesn't already exist for the file.
-			If the file is already loaded in a buffer via this method, that Buffer is returned.
-			This doesn't keep track of freed files, though, so if you free a buffer that you loaded with this method, it will attempt to return that Buffer again, which will probably cause problems.
-			If you're going to need to free Buffers, I recommend you write your own Buffer management instead of using this method to load them.
-			You can still use the String.convertSong method to convert songs to a SuperCollider-compatible format, though.
-		*/
-		var the_file = this.p;
-		if(XR.fileDict.isNil, {
-			XR.fileDict = Dictionary.new;
-		});
-		if(File.exists(the_file), {
-			the_file = the_file.convertSong;
-			if(XR.fileDict.includesKey(the_file), {
-				^XR.fileDict[the_file];
-			}, {
-				var sf = SoundFile.openRead(the_file);
-				case( // make sure we return a buffer with 2 channels, since that's what I usually expect...
-					{ sf.numChannels == 2 }, {
-						XR.fileDict[the_file] = Buffer.read(Server.default, the_file);
-					},
-					{ sf.numChannels == 1 }, {
-						XR.fileDict[the_file] = Buffer.readChannel(Server.default, the_file, channels:[0,0]);
-					},
-					{ sf.numChannels > 2 }, {
-						XR.fileDict[the_file] = Buffer.readChannel(Server.default, the_file, channels:[0,1]);
-					},
-				);
-				sf.close;
-				^XR.fileDict[the_file];
-			});
-		}, {
-			(the_file ++ " was not found.").error;
-		});
+	bd {
+		| item numChannels wavetable |
+		^Bdef(this, item, numChannels, wavetable);
 	}
-	bm { // mono buffer - same as the 'b' method above, but loads a mono buffer instead.
-		/*
-			FIX: there's lots of code duplication here. That means there's probably a better way to write these 2 methods.
-		*/
-		var the_file = this.p;
-		if(XR.monoFileDict.isNil, {
-			XR.monoFileDict = Dictionary.new;
-		});
-		if(File.exists(the_file), {
-			the_file = the_file.convertSong;
-			if(XR.monoFileDict.includesKey(the_file), {
-				^XR.monoFileDict[the_file];
-			}, {
-				var sf = SoundFile.openRead(the_file);
-				if(sf.numChannels == 1, {
-					XR.monoFileDict[the_file] = Buffer.read(Server.default, the_file);
-				}, {
-					XR.monoFileDict[the_file] = Buffer.readChannel(Server.default, the_file, channels:[0]); // FIX: this only loads the left channel.
-				});
-				sf.close;
-				^XR.monoFileDict[the_file];
-			});
-		}, {
-			(the_file ++ " was not found.").error;
-		});
+	bdef {
+		| item numChannels wavetable |
+		^Bdef(this, item, numChannels, wavetable);
 	}
-	convertSong {
+	b {
+		^this.bd(numChannels:2).buffer;
+	}
+	bm {
+		^this.bd(numChannels:1).buffer;
+	}
+	bw {
+		^this.bd(numChannels:1, wavetable:true).buffer;
+	}
+	// b { // buffer
+	// 	/*
+	// 		Loads a buffer with the sound specified by this string.
+	// 		You can call this method as much as you want on the same file because it keeps track of which files are loaded, only reading the file into a new Buffer if one doesn't already exist for the file.
+	// 		If the file is already loaded in a buffer via this method, that Buffer is returned.
+	// 		This doesn't keep track of freed files, though, so if you free a buffer that you loaded with this method, it will attempt to return that Buffer again, which will probably cause problems.
+	// 		If you're going to need to free Buffers, I recommend you write your own Buffer management instead of using this method to load them.
+	// 		You can still use the String.convertToWav method to convert songs to a SuperCollider-compatible format, though.
+	// 	*/
+	// 	// FIX - should return instantly, even if conversion is required... Is this possible? For now, calling this method seems to block all other execution. That sucks.
+	// 	var the_file = this.p;
+	// 	if(the_file[0] != $/, {
+	// 		the_file = Platform.resourceDir +/+ the_file;
+	// 	});
+	// 	if(XR.fileDict.isNil, {
+	// 		XR.fileDict = Dictionary.new;
+	// 	});
+	// 	if(File.exists(the_file), {
+	// 		the_file = the_file.convertToWav;
+	// 		if(XR.fileDict.includesKey(the_file), {
+	// 			^XR.fileDict[the_file];
+	// 		}, {
+	// 			var sf = SoundFile.openRead(the_file);
+	// 			case( // make sure we return a buffer with 2 channels, since that's what I usually expect...
+	// 				{ sf.numChannels == 2 }, {
+	// 					XR.fileDict[the_file] = Buffer.read(Server.default, the_file);
+	// 				},
+	// 				{ sf.numChannels == 1 }, {
+	// 					XR.fileDict[the_file] = Buffer.readChannel(Server.default, the_file, channels:[0,0]);
+	// 				},
+	// 				{ sf.numChannels > 2 }, {
+	// 					XR.fileDict[the_file] = Buffer.readChannel(Server.default, the_file, channels:[0,1]);
+	// 				},
+	// 			);
+	// 			sf.close;
+	// 			^XR.fileDict[the_file];
+	// 		});
+	// 	}, {
+	// 		(the_file ++ " was not found.").error;
+	// 	});
+	// }
+	// bm { // mono buffer - same as the 'b' method above, but loads a mono buffer instead.
+	// 	/*
+	// 		FIX: there's lots of code duplication here. That means there's probably a better way to write these 2 methods.
+	// 	*/
+	// 	var the_file = this.p;
+	// 	if(XR.monoFileDict.isNil, {
+	// 		XR.monoFileDict = Dictionary.new;
+	// 	});
+	// 	if(File.exists(the_file), {
+	// 		the_file = the_file.convertToWav;
+	// 		if(XR.monoFileDict.includesKey(the_file), {
+	// 			^XR.monoFileDict[the_file];
+	// 		}, {
+	// 			var sf = SoundFile.openRead(the_file);
+	// 			if(sf.numChannels == 1, {
+	// 				XR.monoFileDict[the_file] = Buffer.read(Server.default, the_file);
+	// 			}, {
+	// 				XR.monoFileDict[the_file] = Buffer.readChannel(Server.default, the_file, channels:[0]); // FIX: this only loads the left channel; it should mix the channels together.
+	// 			});
+	// 			sf.close;
+	// 			^XR.monoFileDict[the_file];
+	// 		});
+	// 	}, {
+	// 		(the_file ++ " was not found.").error;
+	// 	});
+	// }
+	convertToWav {
 		/*
 			If the file specified by this string is not supported for loading by SuperCollider, it is converted to wav using the appropriate program, and then the path to the (temporary) wav file is returned.
 		*/
 		var dir = (Platform.defaultTempDir ++ "supercollider").mkdir; // should be a temporary directory so the converted files don't stick around and waste your harddrive space!
 		var file = this.p;
 		var output = dir +/+ file.basename.splitext[0] ++ ".wav";
-		if([\wav, \aif, \aiff].includes(file.basename.splitext[1].toLower.asSymbol), { // things that don't need to be converted
+		if([\wav, \aif, \aiff].includes((file.basename.splitext[1] ? "").toLower.asSymbol), { // things that don't need to be converted
 			^file;
 		}, {
 			if(File.exists(output), { // the output file already exists(?), so we do nothing and just return the path to it.
-				// (output ++ " already exists...").postln;
 				^output;
 			}, { // if the output file doesn't exist, we have to convert it.
 				("Converting " ++ file ++ "...").postln;
@@ -153,7 +199,11 @@ XR { // FIX: research the Library class
 					},
 					"ogg", {
 						("oggdec -o \"" ++ output ++ "\" \"" ++ file ++ "\" 2>/dev/null").silentCommand;
-					});
+					},
+					"m4a", {
+						("ffmpeg -i \"" ++ file ++ "\" \"" ++ output ++ "\" 2>/dev/null").silentCommand;
+					},
+				);
 				("Done converting " ++ file ++ ".").postln;
 				^output;
 			});
@@ -185,43 +235,26 @@ XR { // FIX: research the Library class
 		var buf;
 		("espeak -w \"" ++ filename ++ "\" \"" ++ this.quote ++ "\" &>/dev/null").unixCmd;
 		fork{
-			var buf = Buffer.cueSoundFile(Server.default, filename, numChannels: 1);
-			var synth;
-			Server.default.sync;
-			synth = Synth(\speakSynth, [\bufnum, buf]);
-			NodeWatcher.register(synth);
-			block {
-				| break |
-				loop {
-					1.wait;
-					if(synth.isRunning.not, {
-						buf.free;
-						break.value;
-					});
-				}
-			}
-		}
-	}*/
-	drumConv {
-		| symbolmap=(()) |
-		var result = [];
-		symbolmap = ('*':\kik, '!':\snare1, 'r':\rim, 'k':\kick, 's':\snare1, 'h':\hat, 't':\scratch) ++ symbolmap;
-		this.do({
-			| char |
-			var schar = symbolmap[char.asSymbol];
-			if(schar.notNil, {
-				if(schar.isKindOf(Event), {
-					result = result.add((dur:1/4)++schar);
-				}, {
-					result = result.add((instrument: schar, dur: 1/4));
-				});
-			}, {
-				if([$\n, $ ].includes(char).not, {
-					result = result.add((type: \rest, dur: 1/4));
-				});
-			});
+		var buf = Buffer.cueSoundFile(Server.default, filename, numChannels: 1);
+		var synth;
+		Server.default.sync;
+		synth = Synth(\speakSynth, [\bufnum, buf]);
+		NodeWatcher.register(synth);
+		block {
+		| break |
+		loop {
+		1.wait;
+		if(synth.isRunning.not, {
+		buf.free;
+		break.value;
 		});
-		^Pseq(result);
+		}
+		}
+		}
+		}*/
+	drumConv {
+		| symbolmap |
+		^this.asArray.drumConv(symbolmap);
 	}
 	// drumDurConv { // should be like drumConv, but only output durs for \dur, or perhaps note types for \type.
 	// 	^this.drumConv(('*'
@@ -255,6 +288,7 @@ XR { // FIX: research the Library class
 		base = base ? 60;
 		^this.ratecps(base.midicps).cpsmidi; // i'm lazy!
 	}
+	// FIX: make these next 2 able to accept a tempo as a number also, and then re-copy them to + UGen.
 	beatstime { // convert a number of beats to an amount of time (in seconds, of course) based on a TempoClock.
 		| tempo |
 		tempo = tempo ?? { TempoClock.default; };
@@ -272,10 +306,10 @@ XR { // FIX: research the Library class
 	}
 	remap { // map a number into a spec and out of a different one.
 		| inspec outspec |
+		if(outspec.isKindOf(Env), {
+			outspec.duration_(1);
+		});
 		^outspec.asSpec.map(inspec.asSpec.unmap(this));
-	}
-	rescale { // alias for remap
-		"Use remap, not rescale!".warn;
 	}
 	truncString {
 		| decimals=2 |
@@ -289,7 +323,111 @@ XR { // FIX: research the Library class
 	}
 }
 
++ UGen {
+	cpsrate { // frequency to playback rate conversion (to allow you to play UGens like PlayBuf using a normal frequency value)
+		| base |
+		base = base ?? { 60.midicps }; // base note defaults to midi note 60
+		^this/base;
+	}
+	ratecps { // FIX: needs fixing(?)
+		| base |
+		base = base ?? { 60.midicps };
+		^base*this;
+	}
+	midirate {
+		// midi note to playback rate conversion
+		| base |
+		base = base ? 60;
+		^this.midicps.cpsrate(base.midicps); // i'm lazy!
+	}
+	ratemidi {
+		| base |
+		base = base ? 60;
+		^this.ratecps(base.midicps).cpsmidi; // i'm lazy!
+	}
+	// beatstime { // convert a number of beats to an amount of time (in seconds, of course) based on a TempoClock.
+	// 	| tempo |
+	// 	tempo = tempo ?? { TempoClock.default; };
+	// 	^this*(tempo.beatDur);
+	// }
+	// timebeats {
+	// 	| tempo |
+	// 	tempo = tempo ?? { TempoClock.default; };
+	// 	^this/(tempo.beatDur);
+	// }
+	transpose { // transpose a frequency value by semitones and/or octaves.
+		| semitones=0 octaves=0 | // for example: 440.transpose(1) will return a number one semitone higher than 440Hz.
+		var semi = semitones + (octaves * 12);
+		^this*(2**(semi/12));
+	}
+	remap { // map a number into a spec and out of a different one.
+		| inspec outspec |
+		if(outspec.isKindOf(Env), {
+			outspec.duration_(1);
+		});
+		^outspec.asSpec.map(inspec.asSpec.unmap(this));
+	}
+	// remap {
+	// 	| inspec outspec |
+	// 	^this.collect({
+	// 		| n |
+	// 		n.remap(inspec, outspec);
+	// 	});
+	// }
+	delay {
+		| delaytime=0.1 maxdelaytime |
+		^if(maxdelaytime.isNil, {
+			DelayL.multiNew(this.rate, this, delaytime, delaytime);
+		}, {
+			DelayL.multiNew(this.rate, this, maxdelaytime, delaytime);
+		});
+	}
+	mdelay { // FIX
+		| delaytimes=0.1 maxdelaytime |
+		var lb, phase;
+		maxdelaytime = maxdelaytime??{delaytimes.reduce(\max)};
+		lb = LocalBuf(Server.default.sampleRate*maxdelaytime, 1);
+		phase = DelTapWr.ar(lb, this);
+		^DelTapRd.ar(lb, phase, delaytimes);
+	}
+	mdel {
+		| delaytimes maxdelaytime |
+		^this.mdelay(delaytimes, maxdelaytime);
+	}
+	// transpose {
+	// 	| semitones=0 octaves=0 |
+	// 	var semi = semitones + (octaves * 12);
+	// 	^(this*(2**(semi/12)));//BinaryOpUGen.new('*', this, (2**(semi/12)));
+	// }
+	beatstime {
+		| tempo |
+		tempo = tempo ? 1;
+		^(this*(1/tempo));
+	}
+}
+
 + Array {
+	drumConv {
+		| symbolmap=(()) |
+		var result = [];
+		symbolmap = ('*':\kik, '!':\snare1, 'r':\rim, 'k':\kick, 's':\snare1, 'h':\hat, 't':\scratch) ++ symbolmap;
+		this.do({
+			| char |
+			var schar = symbolmap[char.asSymbol];
+			if(schar.notNil, {
+				if(schar.isKindOf(Event), {
+					result = result.add((dur:1/4)++schar);
+				}, {
+					result = result.add((instrument: schar, dur: 1/4));
+				});
+			}, {
+				if([$\n, $ ].includes(char).not, {
+					result = result.add((type: \rest, dur: 1/4));
+				});
+			});
+		});
+		^Pseq(result);
+	}
 	requireSynthDefs {
 		this.do({
 			| item |
@@ -314,6 +452,13 @@ XR { // FIX: research the Library class
 	beatstime { ^this.performUnaryOp('beatstime') }
 	timebeats { ^this.performUnaryOp('timebeats') }
 	transpose { ^this.performUnaryOp('transpose') }
+	delay {
+		| delaytime=0.1 maxdelaytime |
+		^this.collect({
+			| i |
+			i.delay(delaytime, maxdelaytime);
+		});
+	}
 	remap {
 		| inspec outspec |
 		^this.collect({
@@ -382,31 +527,6 @@ XR { // FIX: research the Library class
 }
 
 + Event {
-	fuse {
-		| operation='mean' ... events |
-		var ckeys = [];
-		var res = ();
-		this.keys.do({
-			| key |
-			ckeys = ckeys ++ [key];
-			res[key] = ([this[key]] ++ events.collect(_[key]));
-		});
-		events.do({
-			| event num |
-			event.keys.do({
-				| key |
-				if(ckeys.includes(key).not, {
-					ckeys = ckeys ++ [key];
-					res[key] = ([event[key]] ++ (events[(num+1)..].collect(_[key])));
-				});
-			});
-		});
-		res.keys.do({
-			| key |
-			res[key] = Message(res[key], operation).value;
-		});
-		^res;
-	}
 	trueCompare { // because ('test':5.0, 'sustain':1) == ('test':1.0, 'sustain':1) doesn't return what you'd think it does...
 		| event |
 		if(this.keys != event.keys, {
@@ -453,6 +573,30 @@ XR { // FIX: research the Library class
 		});
 		^res;
 	}
+	combineCommonIntoArrays {
+		/*
+			provide another Event as an arg and any common keys between the 2 will have their values turned into arrays of the previous values.
+			i.e.:
+			(foo:\bar).combineCommonIntoArrays((foo:\baz)) == (foo:[\bar, \baz])
+		*/
+		| event |
+		var res = this.deepCopy;
+		event.keys.do({
+			| key |
+			if(res.keys.includes(key), {
+				if(res[key].isSequenceableCollection, {
+					res[key] = res[key] ++
+					if(event[key].isSequenceableCollection, { event[key] }, { [event[key]] });
+				}, {
+					res[key] = [res[key]] ++
+					if(event[key].isSequenceableCollection, { event[key] }, { [event[key]] });
+				});
+			}, {
+				res[key] = event[key];
+			});
+		});
+		^res;
+	}
 }
 
 + Buffer {
@@ -475,8 +619,14 @@ XR { // FIX: research the Library class
 		nsig = osig.resamp1(newsize).as(Signal);
 		^Buffer.loadCollection(Server.default, nsig.asWavetable);
 	}
-	length { // time in seconds
+	dur { // time in seconds
 		^(this.numFrames/this.sampleRate);
+	}
+}
+
++ Node {
+	setNow { | ... args | // pairs of keys or indices and value
+		server.sendMsg(*([15, this.nodeID] ++ args));
 	}
 }
 
@@ -494,8 +644,25 @@ XR { // FIX: research the Library class
 
 + SynthDef {
 	*list {
-		| excludeSystem=true |
-		var list = SynthDescLib.global.synthDescs.keys.asArray;
+		| type=false excludeSystem=true |
+		/* returns a list of names of all SynthDefs.
+			'type' can be a symbol or nil, in which case only SynthDefs whose metadata 'type' matches will be listed.
+			if 'type' is false (the default), all SynthDefs will be listed regardless of their metadata's 'type' value.
+			if excludeSystem is true (the default), exclude known utility SynthDefs (i.e. for freqScope) as well as SynthDefs whose name begins with an underscore.
+		*/
+		var list = SynthDescLib.global.synthDescs;
+		if(type != false, {
+			list = list.select({
+				| sd |
+				var sdtype = if(sd.metadata.isNil, {
+					nil;
+				}, {
+					sd.metadata[\type];
+				});
+				sdtype == type;
+			});
+		});
+		list = list.keys.asArray;
 		if(excludeSystem, {
 			var excludeList = (1..16).collect({
 				| n |
@@ -503,7 +670,7 @@ XR { // FIX: research the Library class
 					| x |
 					(x++n).asSymbol;
 				});
-			}).flat++[\freqScope0_magresponse_shm, \freqScope1_magresponse_shm, \freqScope0_magresponse, \freqScope1_magresponse, \freqScope0_shm, \freqScope1_shm];
+			}).flat++[\freqScope0_magresponse_shm, \freqScope1_magresponse_shm, \freqScope0_magresponse, \freqScope1_magresponse, \freqScope0_shm, \freqScope1_shm, \, \freqScope0, \wvst1gl, \wvst0];
 			list = list.reject(excludeList.includes(_));
 			list = list.reject({
 				| e |
@@ -524,18 +691,26 @@ XR { // FIX: research the Library class
 	}
 	remap { // map a number into a spec and out of a different one.
 		| inspec outspec |
+		if(outspec.isKindOf(Env), {
+			outspec.duration_(1);
+		});
 		^outspec.asSpec.map(inspec.asSpec.unmap(this));
 	}
-	rec { |path, headerFormat = "wav", sampleFormat = "float", numChannels = 2, dur = nil, fadeTime = 0.2, clock(TempoClock.default), protoEvent(Event.default), server(Server.default), out = 0|
+	rec {
+		| path headerFormat="wav" sampleFormat="float" numChannels=2 dur=nil fadeTime=1 clock(TempoClock.default) protoEvent(Event.default) server(Server.default) out=0 |
 		var	buf, bus, start, recsynth, cmdp, pattern, defname, cond, startTime;
 		if(dur.notNil) { pattern = Pfindur(dur, this) } { pattern = this };
-		path ?? {
-			if(thisProcess.platform.name == \windows) {
-				path = thisProcess.platform.recordingsDir +/+ "SC_" ++ Main.elapsedTime.round(0.01) ++ "." ++ headerFormat;
-			} {
-				path = thisProcess.platform.recordingsDir +/+ "SC_" ++ Date.localtime.stamp ++ "." ++ headerFormat;
-			};
-		};
+		if(path.isNil, {
+			if(this.respondsTo(\name), {
+				path = this.name.asString;
+			}, {
+				if(thisProcess.platform.name == \windows) {
+					path = thisProcess.platform.recordingsDir +/+ "SC_" ++ Main.elapsedTime.round(0.01) ++ "." ++ headerFormat;
+				} {
+					path = thisProcess.platform.recordingsDir +/+ "SC_" ++ Date.localtime.stamp ++ "." ++ headerFormat;
+				};
+			});
+		});
 		if(path[0] != $/, {
 			path = thisProcess.platform.recordingsDir +/+ path;
 		});
@@ -582,10 +757,10 @@ XR { // FIX: research the Library class
 						}),
 						Prout({ (type: \kill, id: recsynth).yield;nil.yield; }),
 					], 1),
-					{ "hi".postln;(type: \kill, id: recsynth).play }
+					{ (type: \kill, id: recsynth).play }
 				),
 				// on error, killing the recsynth triggers rest of cleanup below
-				{ "Het".postln;(type: \kill, id: recsynth).play }
+				{ (type: \kill, id: recsynth).play }
 			).play(clock, protoEvent, quant: 0);
 			// clean up after recording synth stops
 			cond.hang;
@@ -601,7 +776,12 @@ XR { // FIX: research the Library class
 
 + Pdef {
 	*list {
-		^Pdef.all.keys.asArray;
+		| excludeSystem=true |
+		// when excludeSystem is true, exclude "system" patterns, i.e.: '' and all of the patterns whose names start with _.
+		^Pdef.all.keys.asArray.reject({
+			| name |
+			name == '' or: {name.asString[0] == $_};
+		});
 	}
 }
 
@@ -625,6 +805,31 @@ XR { // FIX: research the Library class
 	controls {
 		^this.controlNames;
 	}
+	line { // connects a synth to a parameter to smoothly change its value.
+		| param start end=1 time=1 curve=0 |
+		var bus, synth, get;
+		get = this.get(param);
+		if(get.isKindOf(Symbol), {
+			bus = Bus.new(\control, get.asString[1..].asInteger, 1);
+			if(start.isNil, {
+				start = bus.get;
+			});
+		}, {
+			if(start.isNil, {
+				start = get;
+			});
+			bus = Bus.control(Server.default, 1).set(start);
+		});
+		this.set(param, bus.asMap);
+		Pseq([ // FIX: make it so that this method will free the previous synth if called before the last one ends.
+			(instrument:\line, start:start, end:end, time:time, curve:curve, out:bus, dur:time.timebeats),
+			Pfunc({
+				bus.free;
+				this.set(param, end);
+				nil;
+			}),
+		]).play;
+	}
 }
 
 + NodeProxy {
@@ -647,7 +852,7 @@ XR { // FIX: research the Library class
 	}
 	*line {
 		| start=0 end=1 time=1 curve=0 |
-		^this.new([start, start, end, end], [0, time, 0], [0, curve, 0]);
+		^this.new([start, start, end], [0, time], [0, curve]);
 	}
 	*retrig {
 		| start=0 end=1 time=1 curve=0 |
@@ -712,36 +917,14 @@ XR { // FIX: research the Library class
 	}
 }
 
-+ UGen {
-	delay {
-		| delaytime=0.1 maxdelaytime |
-		^if(maxdelaytime.isNil, {
-			DelayL.multiNew(this.rate, this, delaytime, delaytime);
-		}, {
-			DelayL.multiNew(this.rate, this, maxdelaytime, delaytime);
-		});
-	}
-	mdelay { // FIX
-		| delaytimes=0.1 maxdelaytime |
-		var lb, phase;
-		maxdelaytime = maxdelaytime??{delaytimes.reduce(\max)};
-		lb = LocalBuf(Server.default.sampleRate*maxdelaytime, 1);
-		phase = DelTapWr.ar(lb, this);
-		^DelTapRd.ar(lb, phase, delaytimes);
-	}
-	mdel {
-		| delaytimes maxdelaytime |
-		^this.mdelay(delaytimes, maxdelaytime);
-	}
-	transpose {
-		| semitones=0 octaves=0 |
-		var semi = semitones + (octaves * 12);
-		^(this*(2**(semi/12)));//BinaryOpUGen.new('*', this, (2**(semi/12)));
-	}
-	beatstime {
-		| tempo |
-		tempo = tempo ?? { TempoClock.default };
-		^(this*tempo.beatDur);//BinaryOpUGen.new('*', this, tempo.beatDur);
++ MIDIOut {
+	*select { // convenience function to select an output & connect a port by part of its name.
+		| name |
+		var midiout;
+		var endpoint = MIDIClient.destinations.select({
+			| mc |
+			mc.device.find(name).isNumber;
+		})[0];
+		^MIDIOut.newByName(endpoint.device, endpoint.name).connect(MIDIOut.findPort(name));
 	}
 }
-

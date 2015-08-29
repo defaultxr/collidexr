@@ -89,7 +89,7 @@ CompletingTextField : SCViewHolder {
 			lv = ListView(view.parents.at(0),
 				Rect(
 					tf.bounds.left+tf.parent.bounds.left,
-					tf.bounds.top+tf.bounds.height+tf.parent.bounds.top,
+					tf.bounds.top+tf.bounds.height,
 					tf.bounds.width,
 					completionHeight
 				)

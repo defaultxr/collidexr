@@ -140,6 +140,7 @@ Tracker {
 	// gui elements:
 	var win, title, posboxes, rows, headers, txts;
 	// functions
+	var keymap;
 	var kDA;
 	*new {
 		| song |
@@ -157,107 +158,85 @@ Tracker {
 		// state
 		position = [0, 0, 0];
 		// functions
+		keymap = Keymap(( // commented this out cuz i'll fix all of it later. needs a lot of restructuring.
+			// 'C-a': {
+			// 	AppClock.sched(0, { view.select(0, 0); });
+			// },
+			// 'C-e': {
+			// 	view.select(view.string.size, 0);
+			// },
+			// 'C-b': {
+			// 	view.select(view.selectionStart-1, 0);
+			// },
+			// 'C-f': {
+			// 	view.select(view.selectionStart+1, 0);
+			// },
+			// 'M-b': {
+			// 	this.focus(x-1, y);
+			// 	true;
+			// },
+			// 'M-f': {
+			// 	this.focus(x+1, y);
+			// 	true;
+			// },
+			// 'M-n': {
+			// 	this.focus(x, y+1);
+			// 	true;
+			// },
+			// 'M-p': {
+			// 	this.focus(x, y-1);
+			// 	true;
+			// },
+			// 'C-n': { // should be "next line or next step"
+			// },
+			// 'C-p': { // should be "previous line or previous step"
+			// },
+			// 'C-j': {
+			// 	this.confirm(x, y);
+			// 	true;
+			// },
+			// 'M-j': {
+			// 	this.confirm(x, y);
+			// 	true;
+			// },
+			// 'C-t': { // "trigger"
+			// 	if(cxy != false && y != (-1), {
+			// 		this.playStep(position[0], cxy[1]);
+			// 	});
+			// 	true;
+			// },
+			// 'M-t': {
+			// 	if(cxy != false, {
+			// 		this.play(position[0], cxy[1].max(0));
+			// 	});
+			// 	true;
+			// },
+			// 'M-s': {
+			// 	this.stop;
+			// 	true;
+			// },
+			// 'M-up': {
+			// 	this.focus(x, y-1);
+			// 	true;
+			// },
+			// 'M-left': {
+			// 	this.focus(x-1, y);
+			// 	true;
+			// },
+			// 'M-down': {
+			// 	this.focus(x, y+1);
+			// 	true;
+			// },
+			// 'M-right': {
+			// 	this.focus(x+1, y);
+			// 	true;
+			// },
+		));
 		kDA = { // keyDownAction
 			| x y view char modifiers unicode keycode |
 			var cxy = this.represents(x, y);
 			var cpat = song.getPattern(position[0]);
 			var ret;
-			switch(char,
-				1.asAscii, { // C-a
-					AppClock.sched(0, { view.select(0, 0); });
-				},
-				5.asAscii, { // C-e
-					view.select(view.string.size, 0);
-				},
-				2.asAscii, { // C-b
-					view.select(view.selectionStart-1, 0);
-				},
-				6.asAscii, { // C-f
-					view.select(view.selectionStart+1, 0);
-				},
-				$b, { // M-b
-					if(modifiers == 524288, {
-						this.focus(x-1, y);
-					});
-					ret = true;
-				},
-				$f, { // M-f
-					if(modifiers == 524288, {
-						this.focus(x+1, y);
-					});
-					ret = true;
-				},
-				$n, { // M-n
-					if(modifiers == 524288, {
-						this.focus(x, y+1);
-					});
-					ret = true;
-				},
-				$p, { // M-p
-					if(modifiers == 524288, {
-						this.focus(x, y-1);
-					});
-					ret = true;
-				},
-				14.asAscii, { // C-n - should be "next line or next step"
-				},
-				16.asAscii, { // C-p - should be "previous line or previous step"
-				},
-				$\n, { // C-j
-					this.confirm(x, y);
-					ret = true;
-				},
-				$j, { // M-j
-					if(modifiers == 524288, {
-						this.confirm(x, y);
-						ret = true;
-					});
-				},
-				20.asAscii, { // C-t for 'trigger'
-					if(cxy != false && y != (-1), {
-						this.playStep(position[0], cxy[1]);
-					});
-					ret = true;
-				},
-				$t, { // M-t
-					if(modifiers == 524288, {
-						if(cxy != false, {
-							this.play(position[0], cxy[1].max(0));
-						});
-						ret = true;
-					});
-				},
-				$s, { // M-s
-					if(modifiers == 524288, {
-						this.stop;
-						ret = true;
-					});
-				});
-			switch(keycode,
-				111, { // up
-					if(modifiers == 524288, {
-						this.focus(x, y-1);
-						ret = true;
-					});
-				},
-				113, { // left
-					if(modifiers == 524288, {
-						this.focus(x-1, y);
-						ret = true;
-					});
-				},
-				116, { // down
-					if(modifiers == 524288, {
-						this.focus(x, y+1);
-						ret = true;
-					});
-				},
-				114, { // right
-					if(modifiers == 524288, {
-						this.focus(x+1, y);
-						ret = true;
-					});
-				});
 			AppClock.sched(0, {
 				this.colorize(x, y);
 			});

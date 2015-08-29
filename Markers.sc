@@ -69,6 +69,9 @@ MarkerSpec { // actual list of points.
 			},
 		);
 	}
+	marks {
+		^this.points;
+	}
 	forPattern { // output for use in patterns, for sending the array of points to a synth.
 		^[this.points.asArray];
 	}
@@ -149,7 +152,7 @@ Markers { // several different MarkerSpecs combined. use this class for convenie
 			if(marks.notNil, {
 				marks = marks.collect({
 					| mrk |
-					(frame: mrk, color: marker.color, type: n);
+					(frame: mrk, color: marker.color, type: n, text: marker.text);
 				});
 			});
 			res = res ++ marks;
@@ -161,7 +164,10 @@ Markers { // several different MarkerSpecs combined. use this class for convenie
 		^markers.asArray;
 	}
 	points {
-		^this.markers;
+		^this.markers.collect(_[\frame]);
+	}
+	sf {
+		^[this.points++[this.total]];
 	}
 	getMarkerToLeft {
 		| frame |

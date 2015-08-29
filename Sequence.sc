@@ -1,7 +1,8 @@
 // IDEA: maybe use EventListPlayer from the Mx quark to play the list of events?
+// TODO: make shift method to shift notes left or right, wrapping them to current length
 
 Sequence { // represents a sequence of notes.
-	var <>list, <protoEvent, >length, <>yType=\midinote; // length is the length in "beats"
+	var <>list, <protoEvent, >dur, <>yType=\midinote; // dur is the duration in beats
 	*new {
 		| ... notes |
 		^super.new.init(*notes);
@@ -17,26 +18,34 @@ Sequence { // represents a sequence of notes.
 	}
 	storeOn {
 		| stream |
-		stream << "Sequence(*" << this.asList.cs << ")"
+		stream << "Sequence(*" << this.rawList.cs << ")"
 		<< if(this.protoEvent.isNil, "", ".protoEvent_(" ++ this.protoEvent.cs ++ ")")
-		<< if(length.isNil, "", ".length_(" ++ this.length.cs ++ ")")
+		<< if(dur.isNil, "", ".dur_(" ++ this.dur.cs ++ ")")
 		<< if(this.yType == \midinote, "", ".yType_(" ++ this.yType.cs ++ ")");
 	}
-	actualLength {
+	actualDur {
 		var res = list.reject(_.isNil).collect({
 			| evt |
 			evt[\beat]+(evt[\sustain]?1)
 		});
-		^if(res.size == 0, 1, { res.maxItem.ceil; }); // don't allow a sequence of length 0 (to make it "loop-safe"). otherwise, return the length.
-		// FIX: remove loop safety (it should be in the looper's code, not here).
-		// FIX: might want to apply a quant to the length, i.e. to round it to the nearest beat?
+		^res.maxItem;
 	}
-	length {
-		^if(length.isNil, { // if length is nil, find the last playing note in the sequence and use that as the end point.
-			this.actualLength;
-		}, length);
+	collect {
+		| function |
+		^this.list.collect(function);
 	}
-	length2 { // length, counting only when notes begin.
+	dur {
+		^if(dur.isNil, { // if dur is nil, find the last playing note in the sequence and use that as the end point.
+			var len = this.actualDur.ceil;
+			if(len == 0, {
+				1;
+			}, {
+				len;
+			});
+		}, dur);
+		// FIX: might want to apply a quant to the dur, i.e. to round it to the nearest beat?
+	}
+	dur2 { // dur, counting only when notes begin.
 		var res = list.reject(_.isNil).collect({
 			| evt |
 			evt[\beat];
@@ -49,6 +58,10 @@ Sequence { // represents a sequence of notes.
 			if(note[\beat].notNil, {
 				note[\beat] = note[\beat].max(0);
 			});
+			note.removeAt(\id);
+			note.removeAt(\server);
+			note.removeAt(\isPlaying);
+			note.removeAt(\msgFunc);
 			list = list.add(note);
 			^(list.size-1);
 		}, {
@@ -97,9 +110,9 @@ Sequence { // represents a sequence of notes.
 	}
 	eventsIn { // all the events that begin within a range.
 		| start end |
-		^this.asList.select({
+		^this.rawList.select({
 			| event |
-			event.notNil && { (event[\beat] >= start) and: {event[\beat] < end} };
+			event.notNil and: { (event[\beat] >= start) and: {event[\beat] < end} };
 		});
 	}
 	protoEvent_ { // FIX: a protoEvent should be provided to the stream, not the pattern itself?
@@ -109,28 +122,51 @@ Sequence { // represents a sequence of notes.
 	rawList {
 		^list.reject(_.isNil);
 	}
-	asList {
+	asList { // NEW version
 		var resAry = [];
-		var ary = this.rawList.sortBy(\beat);
-		ary.do({ // FIX: should detect "silent" sections and use rests instead of a long dur!!!
+		var ary = this.rawList.sortBy(\beat).reject({|e|e[\beat].isNil});
+		ary.do({
 			| event index |
 			var res = event.deepCopy;
-			res[\dur] = if(index == (ary.size-1), {
-				res[\sustain];
-			}, {
-				ary[index+1][\beat]-res[\beat];
+			var last = resAry.last;
+			var next = ary[index+1];
+			var between = res[\beat] - if(last.isNil, 0, {(last[\dur]+last[\beat])});
+			res[\dur] = res[\sustain];
+			if(index == 0 and: {between > 0}, {
+				resAry = resAry ++ [(type:\rest, dur:between, beat:0)];
+			});
+			// FIX: don't use \delta
+			if(next.notNil, {
+				res[\delta] = (next[\beat] - event[\beat]);
 			});
 			resAry = resAry ++ [res];
 		});
-		if(length.notNil and: { this.actualLength < length }, { // if the specified length is longer than the actual length, pad the list with a rest at the end to sync.
-			resAry = resAry ++ [(type:\rest, dur:(length-this.actualLength))];
+		if(resAry.size == 0, {
+			resAry = [(type:\rest, dur:1)];
+		}, {
+			if(dur.notNil, {
+				if(this.actualDur < dur, { // if the specified dur is longer than the actual dur, pad the list with a rest at the end to sync.
+					var last = resAry.last;
+					var d_or_s = last[\sustain];
+					resAry = resAry ++ [(type:\rest, dur:(dur-this.actualDur), beat:(d_or_s+last[\beat]))];
+				});
+				if(this.actualDur > dur, { // FIX
+					"dur smaller than actual dur is not yet supported.".error;
+				});
+			});
+			if(this.actualDur < this.actualDur.ceil, {
+				var last = resAry.last;
+				resAry = resAry ++ [(type:\rest, dur:(this.actualDur.ceil-this.actualDur), beat:(this.actualDur))];
+			});
 		});
-		// FIX: should trim list if the specified length is less than the actual length.
 		^resAry;
-		// ^if(resAry==[], [(type:\rest)], resAry);
 	}
 	asPattern {
-		^Pchain(protoEvent, Pseq(this.asList));
+		var list = this.asList;
+		if(list.size == 0, {
+			list = [(type:\rest, dur:1)];
+		});
+		^Pchain(protoEvent, Pseq(list));
 	}
 	play {
 		| clock protoEvent quant |
@@ -140,13 +176,46 @@ Sequence { // represents a sequence of notes.
 		| clock quant protoEvent |
 		^this.play(clock, protoEvent, quant);
 	}
-	record {
-		| mode=\midi |
+	startRecording { // just re-initializes the Sequence. calling this is obviously not required if you just created the Sequence.
+		this.init;
+	}
+	record { // record a note.
+		| event clock=(TempoClock.default) |
+		var cbeat, lat = Server.default.latency.timebeats(clock);
+		if(this.protoEvent[\tempoClockStartBeat].isNil, {
+			this.protoEvent_(this.protoEvent++(tempoClockStartBeat:clock.beats-lat));
+		});
+		cbeat = (clock.beats-this.protoEvent[\tempoClockStartBeat]-lat);
+		this.add(event++(beat:cbeat));
+	}
+	recordFree { // record a note being freed.
+		| event clock=(TempoClock.default) |
+		var cbeat = (clock.beats-this.protoEvent[\tempoClockStartBeat])-Server.default.latency.timebeats(clock);
+		var filteredlist = this.list.select({
+			| e |
+			e[\sustain].isNil and: { var cmp = e.deepCopy;cmp.removeAt(\beat);cmp.trueCompare(event); };
+		});
+		filteredlist[0][\sustain] = (cbeat-filteredlist[0][\beat]);
+	}
+	stopRecording { // end recording. basically just removes the 'tempoClockStartBeat' key from the protoEvent. not required, but keeps things cleaner.
+		this.protoEvent.removeAt(\tempoClockStartBeat);
 	}
 	recordGui {
 		^this.recorder.makeWindow;
 	}
 	recorder {
 		^UserView().background_(Color.red);
+	}
+	reverse { // reverse the Sequence, keeping the same duration.
+	}
+	shift { // shift note onsets left (negative) or right (positive), wrapping them to the length of the Sequence.
+		| beats |
+	}
+}
+
++ Pattern {
+	asSequence {
+		| dur force=false | // 'force' is to force creation of a Sequence even if its estimateDur method returns inf.
+		// FIX
 	}
 }

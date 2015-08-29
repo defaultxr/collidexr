@@ -45,7 +45,7 @@ EventHistory {
 
 	pattern_ {
 		| pattern |
-		var beats = pattern.estimateBeats;
+		var beats = pattern.estimateDur;
 		var cbeats = 0;
 		var collection = [];
 		var stream = pattern.asStream;
@@ -160,7 +160,7 @@ EventHistView : SCViewHolder {
 
 	pattern_ {
 		| pattern |
-		var ebeats = pattern.estimateBeats;
+		var ebeats = pattern.estimateDur;
 		this.eventHistory.pattern_(pattern);
 		if(ebeats == inf, {
 			"Infinite length pattern detected! Only showing the first 16 beats.".warn;
@@ -342,7 +342,7 @@ OldEventHistView : SCViewHolder {
 
 	pattern_ {
 		| pattern |
-		var beats = pattern.estimateBeats;
+		var beats = pattern.estimateDur;
 		var cbeats = 0;
 		var collection = [];
 		var stream = pattern.asStream;
